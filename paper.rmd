@@ -1,15 +1,17 @@
 ---
-title:  "Paper"
+title: "Paper"
 author: "Erin Xu"
 date: "2025-11-14"
-output: 
+output:
   pdf_document:
     extra_dependencies: ["bbm"]
+  html_document: default
 urlcolor: blue
 bibliography: references.bib
 nocite: '@*'
 link-citations: true
 ---
+jhkjhkjhkjhkjh
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -29,10 +31,12 @@ summary(cars)
 
 ## Including Plots
 
-You can also embed plots, for example:
+You can also embed plots, for example:fgdhfkdjhdsfkhfsdhjhfsjfkdh
 
 ```{r pressure, echo=FALSE}
 plot(pressure)
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## References 
