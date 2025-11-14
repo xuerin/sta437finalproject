@@ -4,15 +4,19 @@ author: "Erin Xu"
 date: "2025-11-14"
 output:
   pdf_document:
-    extra_dependencies: ["bbm"]
-  html_document: default
-urlcolor: blue
+    latex_engine: xelatex
+header-includes:
+  - \usepackage[margin=1in]{geometry}
+  - \linespread{1.5}
+fontsize: 12pt
 bibliography: references.bib
 nocite: '@*'
 link-citations: true
+urlcolor: blue
 ---
 jhkjhkjhkjhkjh
-
+spacing
+spacing
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
