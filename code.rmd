@@ -1,33 +1,143 @@
 ---
-title: "Code"
+title: "PCA Analysis - Traffic Data"
 output: github_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+## Initial Setup
+
+```{r setup, message=FALSE, warning=FALSE}
 library(tidyverse)
+library(knitr)
 library(ggplot2)
+library(openxlsx)
+library(dplyr)
+library(ggfortify)
+library(plotly)
+library(corrplot)
+set.seed(25)
 
+file <- "traffic.xlsx"
+sheet_names <- getSheetNames(file)
+print(sheet_names)
+num_sheets <- length(sheet_names)
 ```
 
-## GitHub Documents
+## PCA Analysis for All Locations
 
-This is an R Markdown format used for publishing markdown documents to GitHub. When you click the **Knit** button all R code chunks are run and a markdown file (.md) suitable for publishing to GitHub is generated.
+```{r pca-analysis, fig.width=10, fig.height=8, warning=FALSE, message=FALSE}
+# Initialize storage lists
+pca_results <- list()
+loadings_list <- list()
+scores_list <- list()
+components_list <- list()
 
-## Including Code
-
-You can include R code in the document as follows:
-
-```{r cars}
-summary(cars)
+for (sheet in sheet_names) {
+  cat("\n\n### PCA Results for:", sheet, "\n\n")
+  
+  # Read data
+  df <- read.xlsx(file, sheet = sheet)
+  
+  # Remove any non-numeric columns if present
+  df_numeric <- df %>% select(where(is.numeric))
+  
+  # Transpose for time series: rows = time points, columns = variables
+  df_transposed <- as.data.frame(t(df_numeric))
+  
+  # Perform PCA on transposed data
+  pca <- prcomp(df_transposed, center = TRUE, scale. = TRUE)
+  
+  # Store PCA results
+  pca_results[[sheet]] <- pca
+  loadings_list[[sheet]] <- pca$rotation
+  scores_list[[sheet]] <- pca$x
+  components_list[[sheet]] <- summary(pca)
+  
+  # 1. CORRELATION MATRIX HEATMAP (simplified for 288 time points)
+  cor_matrix <- cor(df_transposed, use = "complete.obs")
+  cor_melted <- as.data.frame(as.table(cor_matrix))
+  colnames(cor_melted) <- c("Var1", "Var2", "value")
+  
+  # Convert time indices to numeric for cleaner plotting
+  cor_melted$Time1 <- as.numeric(cor_melted$Var1)
+  cor_melted$Time2 <- as.numeric(cor_melted$Var2)
+  
+  p_corr <- ggplot(cor_melted, aes(x = Time1, y = Time2, fill = value)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                         midpoint = 0, limits = c(-1, 1)) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(size = 8),
+          axis.text.y = element_text(size = 8)) +
+    labs(title = paste("Time Point Correlation Matrix -", sheet),
+         x = "Time Index (5-min intervals)", 
+         y = "Time Index (5-min intervals)", 
+         fill = "Correlation") +
+    scale_x_continuous(breaks = seq(0, 288, by = 48)) +  # Every 4 hours
+    scale_y_continuous(breaks = seq(0, 288, by = 48))
+  print(p_corr)
+  
+  cat("\n\n")
+  
+  # 2. SCREE PLOT
+  ve <- summary(pca)$importance[2, ]
+  scree_df <- data.frame(PC = 1:length(ve), 
+                         Variance = ve * 100)  # Convert to percentage
+  
+  p_scree <- ggplot(scree_df, aes(x = PC, y = Variance)) +
+    geom_line(color = "steelblue", linewidth = 1) + 
+    geom_point(size = 3, color = "steelblue") +
+    labs(title = paste("Scree Plot -", sheet),
+         x = "Principal Component", 
+         y = "Variance Explained (%)") +
+    theme_minimal() +
+    scale_x_continuous(breaks = 1:length(ve))
+  print(p_scree)
+  
+  cat("\n\n")
+  
+  # 3. BIPLOT
+  biplot_plot <- autoplot(pca,
+                          loadings = TRUE,
+                          loadings.label = TRUE,
+                          loadings.label.size = 3,
+                          loadings.colour = "blue",
+                          loadings.label.colour = "darkblue",
+                          scale = 0) +
+    ggtitle(paste("PCA Biplot -", sheet)) +
+    theme_minimal()
+  print(biplot_plot)
+  
+  # Print summary statistics
+  cat("\n\n**Variance Explained:**\n\n")
+  print(kable(summary(pca)$importance[, 1:min(5, ncol(pca$x))], 
+              digits = 3))
+  
+  cat("\n\n---\n\n")
+}
 ```
 
-## Including Plots
+## Summary
 
-You can also embed plots, for example:
+All PCA results have been stored in the following objects:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+- `pca_results`: List containing all PCA objects
+- `loadings_list`: List of loading matrices for each sheet
+- `scores_list`: List of score matrices (PC coordinates) for each sheet
+- `components_list`: List of summary statistics for each sheet
+
+```{r summary}
+cat("Number of sheets analyzed:", length(pca_results), "\n")
+cat("Sheet names:", paste(names(pca_results), collapse = ", "), "\n")
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Accessing Stored Data
+
+You can access specific results using list indexing:
+
+```{r example-access, eval=FALSE}
+# Example: Access PCA results for first sheet
+first_sheet <- sheet_names[1]
+loadings_first <- loadings_list[[first_sheet]]
+scores_first <- scores_list[[first_sheet]]
+components_first <- components_list[[first_sheet]]
+```
