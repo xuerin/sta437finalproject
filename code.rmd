@@ -1,6 +1,9 @@
 ---
-title: "PCA Analysis - Traffic Data"
-output: github_document
+title: "Traffic Code"
+author: "Erin Xu"
+date: "2025-11-14"
+output: pdf_document
+fontsize: 12pt
 ---
 
 ## Initial Setup
@@ -14,6 +17,8 @@ library(dplyr)
 library(ggfortify)
 library(plotly)
 library(corrplot)
+library(patchwork)
+library(pheatmap)
 set.seed(25)
 
 file <- "traffic.xlsx"
@@ -22,122 +27,741 @@ print(sheet_names)
 num_sheets <- length(sheet_names)
 ```
 
-## PCA Analysis for All Locations
+## Cleaning, summary stats, graphs by location
+```{r data-cleaning}
+cat("Loading all location data:\n\n")
 
-```{r pca-analysis, fig.width=10, fig.height=8, warning=FALSE, message=FALSE}
-# Initialize storage lists
-pca_results <- list()
-loadings_list <- list()
-scores_list <- list()
-components_list <- list()
+# Store in list because dealing with 26 locations
+data_list <- list()  # Original: time points × days
+data_transposed <- list()  # Transposed: days × time points
 
-for (sheet in sheet_names) {
-  cat("\n\n### PCA Results for:", sheet, "\n\n")
-  
-  # Read data
+expected_rows <- 288  # time points (5-min intervals over 24 hours)
+expected_cols <- 384  # days
+
+for (sheet in sheet_names){
   df <- read.xlsx(file, sheet = sheet)
-  
-  # Remove any non-numeric columns if present
   df_numeric <- df %>% select(where(is.numeric))
+  # Check dimensions BEFORE storing
+  actual_rows <- nrow(df_numeric)
+  actual_cols <- ncol(df_numeric)
+  cat("Location:", sheet, "\n")
+  cat("  Dimensions:", actual_rows, "×", actual_cols)
+  # Check if dimensions match expectations
+  if (actual_rows != expected_rows || actual_cols != expected_cols) {
+    cat("WARNING: Expected", expected_rows, "×", expected_cols, "\n")
+    stop()
+  } else {
+    cat(" it's fine \n")
+    }
+  # Check for missing values
+  n_missing <- sum(is.na(df_numeric))
+  if (n_missing > 0) {
+    cat("Missing values:", n_missing,)
+    stop()
+    }
+  # Store data
+  data_list[[sheet]] <- df_numeric
+  data_transposed[[sheet]] <- as.data.frame(t(df_numeric))
+  # Summary stats
+  cat("Summary stats for ", sheet, "\n")
+  print(summary(as.vector(as.matrix(data_transposed[[sheet]]))))
+  cat("\n")
+    }
+
+cat("\n✓ All data loaded successfully!\n")
+cat("Total locations:", length(data_list), "\n\n")
+```
+
+| List Name | What it stores | How it's added |
+|-----------|---------------|----------------|
+| `data_list[[sheet]]` | Original data (rows = time points, columns = days) | `data_list[[sheet]] <- df_numeric` |
+| `data_transposed[[sheet]]` | Transposed data (rows = days, columns = time points) | `data_transposed[[sheet]] <- as.data.frame(t(df_numeric))` |
+
+✔ Stored as **named list elements** (key = sheet name)  
+✔ Access like: `data_list$Loc01`, `data_transposed$Loc15`  
+✔ Each one is a **data frame**  
+
+## Paranoid
+```{r}
+# Validation check for all sheets
+mismatch_sheets <- c()
+
+for (sheet in names(data_list)) {
+  original <- as.matrix(data_list[[sheet]])
+  recon <- t(as.matrix(data_transposed[[sheet]]))
   
-  # Transpose for time series: rows = time points, columns = variables
-  df_transposed <- as.data.frame(t(df_numeric))
+  if (!isTRUE(all.equal(original, recon, check.attributes = FALSE))) {
+    mismatch_sheets <- c(mismatch_sheets, sheet)
+  }
+}
+
+if (length(mismatch_sheets) == 0) {
+  message("All sheets match when transposed back.")
+} else {
+  message("Mismatch found in sheets: ", paste(mismatch_sheets, collapse = ", "))
+}
+
+```
+```{r}
+sheet <- names(data_list)[1]
+identical(as.matrix(data_list[[sheet]]), t(as.matrix(data_transposed[[sheet]])))
+```
+
+## Spaghetti Plots by Location
+Show daily time series patterns by location. Clearly we do not ened to care about normality
+```{r spaghetti_day, fig.height=4, fig.width=7}
+
+sample_sheets <- sample(names(data_list), 3)
+spaghettis_locations <- list()
+for (sheet in sample_sheets) {
   
-  # Perform PCA on transposed data
-  pca <- prcomp(df_transposed, center = TRUE, scale. = TRUE)
-  
-  # Store PCA results
-  pca_results[[sheet]] <- pca
-  loadings_list[[sheet]] <- pca$rotation
-  scores_list[[sheet]] <- pca$x
-  components_list[[sheet]] <- summary(pca)
-  
-  # 1. CORRELATION MATRIX HEATMAP (simplified for 288 time points)
-  cor_matrix <- cor(df_transposed, use = "complete.obs")
-  cor_melted <- as.data.frame(as.table(cor_matrix))
-  colnames(cor_melted) <- c("Var1", "Var2", "value")
-  
-  # Convert time indices to numeric for cleaner plotting
-  cor_melted$Time1 <- as.numeric(cor_melted$Var1)
-  cor_melted$Time2 <- as.numeric(cor_melted$Var2)
-  
-  p_corr <- ggplot(cor_melted, aes(x = Time1, y = Time2, fill = value)) +
-    geom_tile() +
-    scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
-                         midpoint = 0, limits = c(-1, 1)) +
-    theme_minimal() +
-    theme(axis.text.x = element_text(size = 8),
-          axis.text.y = element_text(size = 8)) +
-    labs(title = paste("Time Point Correlation Matrix -", sheet),
-         x = "Time Index (5-min intervals)", 
-         y = "Time Index (5-min intervals)", 
-         fill = "Correlation") +
-    scale_x_continuous(breaks = seq(0, 288, by = 48)) +  # Every 4 hours
-    scale_y_continuous(breaks = seq(0, 288, by = 48))
-  print(p_corr)
-  
-  cat("\n\n")
-  
-  # 2. SCREE PLOT
-  ve <- summary(pca)$importance[2, ]
-  scree_df <- data.frame(PC = 1:length(ve), 
-                         Variance = ve * 100)  # Convert to percentage
-  
-  p_scree <- ggplot(scree_df, aes(x = PC, y = Variance)) +
-    geom_line(color = "steelblue", linewidth = 1) + 
-    geom_point(size = 3, color = "steelblue") +
-    labs(title = paste("Scree Plot -", sheet),
-         x = "Principal Component", 
-         y = "Variance Explained (%)") +
-    theme_minimal() +
-    scale_x_continuous(breaks = 1:length(ve))
-  print(p_scree)
-  
-  cat("\n\n")
-  
-  # 3. BIPLOT
-  biplot_plot <- autoplot(pca,
-                          loadings = TRUE,
-                          loadings.label = TRUE,
-                          loadings.label.size = 3,
-                          loadings.colour = "blue",
-                          loadings.label.colour = "darkblue",
-                          scale = 0) +
-    ggtitle(paste("PCA Biplot -", sheet)) +
+  #Spaghetti
+  df_t <- data_transposed[[sheet]] %>%
+    mutate(Day = 1:n()) %>%
+    pivot_longer(cols = -Day, names_to = "Time", values_to = "Value") %>%
+    mutate(Time = as.numeric(Time))
+
+  p2 <- ggplot(df_t, aes(x = Time, y = Value, group = Day)) +
+    geom_line(alpha = 0.2) +
+    labs(title = paste("Daily Traffic Flow Patterns:", sheet),
+         x = "Time (5-min intervals)", y = "Traffic Volume") +
     theme_minimal()
-  print(biplot_plot)
+
+  spaghettis_locations[[sheet]] <- p2
+}
+print(wrap_plots(spaghettis_locations, ncol = 1))
+```
+
+## Spaghetti Plots by Time
+Show daily time series by day. I think this is more informative. 
+```{r spaghetti_time, fig.height=4, fig.width=10}
+random_days <- sample(1:384, 6)
+spag_by_day <- list()
+
+for (d in random_days) {
+  # Collect data for this day from ALL locations
+  df_day <- data.frame()
   
-  # Print summary statistics
-  cat("\n\n**Variance Explained:**\n\n")
-  print(kable(summary(pca)$importance[, 1:min(5, ncol(pca$x))], 
-              digits = 3))
+  for (sheet in names(data_list)) {
+    df <- data_list[[sheet]]
+    
+    # Extract traffic values for day d across 288 timepoints
+    temp <- data.frame(
+      Time = 1:nrow(df),
+      Value = df[, d],
+      Location = sheet
+    )
+    df_day <- rbind(df_day, temp)
+  }
   
-  cat("\n\n---\n\n")
+  # Build spaghetti plot for this day (across all locations)
+  p <- ggplot(df_day, aes(x = Time, y = Value, group = Location, color = Location)) +
+    geom_line(alpha = 0.3) +
+    labs(title = paste("Traffic on Day", d, "Across All Locations"),
+         x = "Time (5-min intervals)", y = "Traffic Volume") +
+    theme_minimal() +
+    theme(legend.position = "none")   # Remove cluttered legend
+  
+  spag_by_day[[paste0("Day_", d)]] <- p
+}
+
+# Display all 3 spaghetti plots (patchwork)
+wrap_plots(spag_by_day, ncol = 2)
+```
+## Average daily profile, by location
+```{r avg_daily_prof,fig.height=4, fig.width=10}
+set.seed(123)  # for reproducibility
+sample_locs <- sample(names(data_list), 3)
+profile_plots <- list()
+time_labels <- seq(0, 23.75, length.out = 288)
+
+
+for (sheet in sample_locs) {
+  df <- data_transposed[[sheet]]
+  avg_day <- colMeans(df, na.rm = TRUE)
+  
+  df_avg <- data.frame(Time = time_labels, AvgVolume = avg_day)
+  
+  p <- ggplot(df_avg, aes(x = Time, y = AvgVolume)) +
+    geom_line(size = 1, alpha = 0.8) +
+    labs(title = paste("Avg Daily Traffic Profile:", sheet),
+         x = "Hour of Day", y = "Average Traffic Volume") +
+    scale_x_continuous(breaks = seq(0, 24, by = 4)) +
+    theme_minimal()
+  
+  profile_plots[[sheet]] <- p
+}
+print(wrap_plots(profile_plots, ncol = 1))
+```
+```{r}
+for (sheet in names(data_transposed)) {
+  df <- data_transposed[[sheet]]
+  cat(sheet, ": ", ncol(df), " time points\n")
+}
+
+```
+## Average daily profile by entire network
+```{r, fig.height=4, fig.width=7}
+time_labels <- format(
+  seq(
+    from = as.POSIXct("00:00", format="%H:%M"),
+    by = "5 min",
+    length.out = 288
+  ),
+  "%H:%M"
+)
+
+# Initialize dataframe
+network_avg <- data.frame(Time = time_labels)
+
+# Compute average profile for each location
+for (sheet in names(data_transposed)) {
+  df <- data_transposed[[sheet]]
+  avg_day <- colMeans(df, na.rm = TRUE)    # 288-length vector
+  network_avg[[sheet]] <- avg_day
+}
+
+# Compute overall network-level average across all locations
+network_avg$AvgVolume <- rowMeans(network_avg[, -1], na.rm = TRUE)
+
+# Plot network-wide average traffic pattern
+ggplot(network_avg, aes(x = 1:288, y = AvgVolume)) +
+  geom_line(size = 1.2, color = "blue") +
+  labs(title = "Network-Wide Average Daily Traffic Pattern",
+       subtitle = "Combined average of all locations",
+       x = "Time of Day (5-minute intervals)", 
+       y = "Average Traffic Volume") +
+  scale_x_continuous(breaks = seq(1, 288, length.out = 7),
+                     labels = c("00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00")) +
+  theme_minimal()
+```
+## Day-to-Day Variability Analysis using the Coefficient of Variation (CV)
+|CV Value | Interpretation|
+|-----------|---------------|
+Low CV (< 0.1)|	Very stable — traffic almost the same every day
+Moderate CV (0.1–0.3)|	Normal variation — common for daytime
+High CV (> 0.3)|	Unstable — spikes, holidays, events, irregular travel
+
+Blue line represents the average Coefficient of Variation (CV) across all locations, indicating the predictability of traffic at each 5-minute interval.  
+Shaded ribbon represents the range of CV values (min–max) across locations, showing how much variability differs between locations at each time of day.
+
+```{r cv-variability, fig.width=10, fig.height=5, message=FALSE, warning=FALSE}
+# Make sure time labels are properly defined (length 288)
+time_labels <- format(
+  seq(from = as.POSIXct("00:00", format="%H:%M"),
+      by = "5 min", length.out = 288),
+  "%H:%M"
+)
+
+# Initialize a dataframe to hold CV values for each location
+cv_by_time <- data.frame(Time = time_labels)
+
+for (sheet in names(data_transposed)) {
+  df <- data_transposed[[sheet]]   # df = 384 days × 288 timepoints
+  
+  # Calculate CV for each timepoint (across all days)
+  cv <- apply(df, 2, function(x) sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE))
+  
+  cv_by_time[[sheet]] <- cv
+}
+
+# Compute summary CV across locations at each timepoint
+avg_cv <- data.frame(
+  Time = time_labels,
+  AvgCV = rowMeans(cv_by_time[, -1], na.rm = TRUE),
+  MinCV = apply(cv_by_time[, -1], 1, min, na.rm = TRUE),
+  MaxCV = apply(cv_by_time[, -1], 1, max, na.rm = TRUE)
+)
+
+# Plot variability across time
+ggplot(avg_cv, aes(x = 1:288, y = AvgCV)) +
+  geom_ribbon(aes(ymin = MinCV, ymax = MaxCV), alpha = 0.15, fill = "blue") +
+  geom_line(color = "blue", size = 1.2) +
+  labs(
+    title = "Traffic Variability Throughout the Day",
+    subtitle = "Coefficient of Variation (CV = SD / Mean) across all locations",
+    x = "Time of Day (5-min intervals)",
+    y = "Coefficient of Variation (CV)"
+  ) +
+  scale_x_continuous(
+    breaks = seq(1, 288, length.out = 7),
+    labels = c("00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00")
+  ) +
+  theme_minimal()
+```
+
+## Peak times
+```{r}
+peak_times <- data.frame(
+  Location = character(),
+  MorningPeak = character(),
+  EveningPeak = character(),
+  QuietHour = character()
+)
+
+for (sheet in names(data_transposed)) {
+  df <- data_transposed[[sheet]]
+  avg_day <- colMeans(df, na.rm = TRUE)
+  
+  morning_peak_idx <- which.max(avg_day[1:144])
+  evening_peak_idx <- which.max(avg_day[145:288]) + 144
+  quiet_idx <- which.min(avg_day)
+  
+  peak_times <- rbind(peak_times, data.frame(
+    Location = sheet,
+    MorningPeak = time_labels[morning_peak_idx],
+    EveningPeak = time_labels[evening_peak_idx],
+    QuietHour = time_labels[quiet_idx]
+  ))
+}
+
+# Display just first few rows, not full table
+head(peak_times, 5)
+```
+
+## Temporal Autocorrelation, ACF
+Picking median CV
+```{r}
+# Compute mean CV for each location
+cv_location_summary <- data.frame(
+  Location = names(cv_by_time)[-1],
+  MeanCV = colMeans(cv_by_time[, -1], na.rm = TRUE)
+)
+
+# Pick median CV location (representative)
+loc_acf <- cv_location_summary$Location[
+  which.min(abs(cv_location_summary$MeanCV - median(cv_location_summary$MeanCV)))
+]
+
+cat("Selected location for ACF:", loc_acf, "\n")
+loc_acf <- sample(names(data_transposed), 1)
+df_loc <- data_transposed[[loc_acf]]
+
+# Use median day to reduce noise
+typical_day <- apply(df_loc, 2, median)
+
+# Compute ACF (up to 4 hours = 48 lags of 5-min intervals)
+acf_result <- acf(typical_day, lag.max = 48, plot = FALSE)
+
+acf_df <- data.frame(
+  Lag = acf_result$lag * 5,  # Convert to minutes
+  ACF = as.numeric(acf_result$acf)
+)
+
+ggplot(acf_df, aes(x = Lag, y = ACF)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_segment(aes(xend = Lag, yend = 0), color = "steelblue", linewidth = 1) +
+  geom_point(color = "steelblue", size = 2) +
+  labs(title = paste("Temporal Autocorrelation (ACF):", loc_acf),
+       x = "Lag (minutes)", y = "Autocorrelation") +
+  theme_minimal()
+```
+
+## Time-Lagged Cross-Correlation (Lead–Lag Detection)
+```{r time-lagged-crosscorr, fig.width=8, fig.height=5}
+loc1 <- selected_locs[1]
+loc2 <- selected_locs[2]
+
+cat("Analyzing lagged relationship between:", loc1, "and", loc2, "\n\n")
+
+# Extract typical daily profiles (median across days)
+day1 <- apply(data_transposed[[loc1]], 2, median)
+day2 <- apply(data_transposed[[loc2]], 2, median)
+
+ccf_result <- ccf(day1, day2, lag.max = 48, plot = FALSE)
+
+ccf_df <- data.frame(
+  Lag = ccf_result$lag * 5,
+  CCF = as.numeric(ccf_result$acf)
+)
+
+ggplot(ccf_df, aes(x = Lag, y = CCF)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  geom_segment(aes(xend = Lag, yend = 0), color = "coral", linewidth = 1) +
+  geom_point(color = "coral", size = 2) +
+  labs(title = paste("Time-Lagged Cross-Correlation:", loc1, "vs", loc2),
+       subtitle = "Negative lag: Loc1 leads | Positive lag: Loc2 leads",
+       x = "Lag (minutes)", y = "Cross-Correlation") +
+  theme_minimal()
+
+# Report strongest lag
+max_idx <- which.max(abs(ccf_df$CCF))
+cat("Max correlation:", round(ccf_df$CCF[max_idx], 3), "at", ccf_df$Lag[max_idx], "minutes\n")
+```
+
+## Spatial correlation (correlgram)
+```{r spatial-correlation, fig.width=6, fig.height=5}
+set.seed(123)
+selected_locs <- sample(names(data_transposed), 3)
+
+# Compute average daily profiles for selected locations
+daily_profile_subset <- data.frame(Time = 1:288)
+
+for (loc in selected_locs) {
+  df <- data_transposed[[loc]]
+  daily_profile_subset[[loc]] <- colMeans(df, na.rm = TRUE)
+}
+
+# Correlation matrix
+cor_subset <- cor(daily_profile_subset[, -1])
+
+corrplot(cor_subset, method = "color",
+         type = "upper", tl.col = "black", tl.cex = 1,
+         title = "Spatial Correlation Among 3 Locations")
+```
+## Correlogram from all 26 locations
+```{r spatial-correlation-correct, fig.width=10, fig.height=10}
+
+cat("\n## Spatial Correlation Structure (CORRECTED)\n\n")
+
+# METHOD 1: Correlate average profiles (what we did - TOO HIGH)
+cat("Method 1: Correlating average daily profiles\n")
+profile_matrix <- matrix(0, nrow = 288, ncol = length(sheet_names))
+colnames(profile_matrix) <- sheet_names
+
+for (i in 1:length(sheet_names)) {
+  sheet <- sheet_names[i]
+  df <- data_transposed[[sheet]]
+  avg_profile <- colMeans(df)
+  profile_matrix[, i] <- avg_profile
+}
+
+cor_profiles <- cor(profile_matrix)
+cat("Mean correlation:", round(mean(cor_profiles[upper.tri(cor_profiles)]), 3), "\n\n")
+
+# METHOD 2: Correlate day-by-day values (BETTER)
+cat("Method 2: Correlating daily total traffic volumes\n")
+
+# Calculate total daily traffic for each location
+daily_totals <- matrix(0, nrow = 384, ncol = length(sheet_names))
+colnames(daily_totals) <- sheet_names
+
+for (i in 1:length(sheet_names)) {
+  sheet <- sheet_names[i]
+  df <- data_transposed[[sheet]]
+  # Sum across time points for each day
+  daily_totals[, i] <- rowSums(df)
+}
+
+# Correlation between daily totals
+cor_daily <- cor(daily_totals)
+
+cat("Mean correlation:", round(mean(cor_daily[upper.tri(cor_daily)]), 3), "\n")
+cat("Min correlation:", round(min(cor_daily[upper.tri(cor_daily)]), 3), "\n")
+cat("Max correlation:", round(max(cor_daily[upper.tri(cor_daily)]), 3), "\n\n")
+
+# METHOD 3: Correlate full time series (MOST COMPREHENSIVE)
+cat("Method 3: Correlating complete time series (384 days × 288 times)\n")
+
+# Flatten each location to a single vector
+full_series <- matrix(0, nrow = 384 * 288, ncol = length(sheet_names))
+colnames(full_series) <- sheet_names
+
+for (i in 1:length(sheet_names)) {
+  sheet <- sheet_names[i]
+  df <- data_transposed[[sheet]]
+  # Flatten to single vector
+  full_series[, i] <- as.vector(t(df))
+}
+
+# Correlation between full time series
+cor_full <- cor(full_series)
+
+cat("Mean correlation:", round(mean(cor_full[upper.tri(cor_full)]), 3), "\n")
+cat("Min correlation:", round(min(cor_full[upper.tri(cor_full)]), 3), "\n")
+cat("Max correlation:", round(max(cor_full[upper.tri(cor_full)]), 3), "\n\n")
+
+# Compare all three methods
+cat("## Comparison of Methods:\n")
+cat("Average profiles correlation:", round(mean(cor_profiles[upper.tri(cor_profiles)]), 3), "\n")
+cat("Daily totals correlation:", round(mean(cor_daily[upper.tri(cor_daily)]), 3), "\n")
+cat("Full series correlation:", round(mean(cor_full[upper.tri(cor_full)]), 3), "\n\n")
+
+# Plot the DAILY TOTALS correlation (most interpretable)
+library(corrplot)
+
+corrplot(cor_daily, 
+         method = "color",
+         type = "upper",
+         order = "hclust",
+         tl.col = "black",
+         tl.cex = 0.7,
+         col = colorRampPalette(c("#3B4CC0", "#B8D6EB", "white", 
+                                   "#F4A582", "#B2182B"))(200),
+         title = "Spatial Correlation: Daily Total Traffic",
+         mar = c(0, 0, 2, 0),
+         addCoef.col = "black",
+         number.cex = 0.5)
+
+# Histogram of correlations
+hist(cor_daily[upper.tri(cor_daily)], 
+     breaks = 30,
+     main = "Distribution of Location Correlations (Daily Totals)",
+     xlab = "Correlation",
+     col = "steelblue",
+     xlim = c(0, 1))
+
+cat("\n## Which method to use?\n")
+cat("- Average profiles: Shows similarity of daily SHAPE (too high)\n")
+cat("- Daily totals: Shows if locations have busy/quiet days together (RECOMMENDED)\n")
+cat("- Full series: Most complete but computationally intensive\n")
+```
+```{r spatial-correlation, fig.width=12, fig.height=10}
+
+cat("\n## Spatial Correlation Structure Across Locations\n\n")
+
+# Calculate total daily traffic for each location
+# (sum of 288 five-minute intervals per day)
+daily_totals <- matrix(0, nrow = 384, ncol = length(sheet_names))
+colnames(daily_totals) <- sheet_names
+
+for (i in 1:length(sheet_names)) {
+  sheet <- sheet_names[i]
+  df <- data_transposed[[sheet]]
+  daily_totals[, i] <- rowSums(df)
+}
+
+# Compute correlation matrix
+location_cor <- cor(daily_totals)
+
+# Summary statistics
+cor_values <- location_cor[upper.tri(location_cor)]
+
+cat("Correlation Statistics:\n")
+cat("  Mean:", round(mean(cor_values), 3), "\n")
+cat("  Median:", round(median(cor_values), 3), "\n")
+cat("  Min:", round(min(cor_values), 3), "\n")
+cat("  Max:", round(max(cor_values), 3), "\n")
+cat("  SD:", round(sd(cor_values), 3), "\n\n")
+
+# Histogram of correlations
+hist(cor_values, 
+     breaks = 30,
+     main = "Distribution of Pairwise Spatial Correlations",
+     xlab = "Correlation Coefficient",
+     col = "steelblue",
+     xlim = c(-0.5, 1))
+abline(v = mean(cor_values), col = "red", lwd = 2, lty = 2)
+legend("topleft", legend = paste("Mean =", round(mean(cor_values), 3)),
+       col = "red", lty = 2, lwd = 2)
+```
+```{r}
+# Visualization 1: corrplot with clustering
+
+corrplot(location_cor, 
+         method = "color",
+         type = "upper",
+         order = "hclust",
+         tl.col = "black",
+         tl.cex = 0.8,
+         col = colorRampPalette(c("#2166AC", "#4393C3", "#92C5DE", 
+                                   "white", 
+                                   "#F4A582", "#D6604D", "#B2182B"))(200),
+         title = "Spatial Correlation: Daily Total Traffic Across 26 Locations",
+         mar = c(0, 0, 2, 0),
+         cl.cex = 0.8)
+
+cat("\nInterpretation:\n")
+cat("- Red = positive correlation (locations co-vary)\n")
+cat("- Blue = negative correlation (inverse relationship)\n")
+cat("- White = no correlation (independent)\n")
+cat("- Clustering reveals groups with similar day-to-day dynamics\n\n")
+```
+```{r}
+# Visualization 2: pheatmap with dendrograms
+library(pheatmap)
+
+pheatmap(location_cor,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         color = colorRampPalette(c("#2166AC", "white", "#B2182B"))(100),
+         display_numbers = FALSE,
+         fontsize = 8,
+         main = "Hierarchical Clustering of Location Correlations",
+         breaks = seq(-0.5, 1, length.out = 101))
+
+cat("\nDendrograms show spatial clustering:\n")
+cat("- Nearby branches = locations with similar traffic patterns\n")
+cat("- Branch height = degree of dissimilarity\n\n")
+```
+```{r}
+# Visualization 3: ggplot heatmap
+library(reshape2)
+
+cor_melted <- melt(location_cor)
+colnames(cor_melted) <- c("Location1", "Location2", "Correlation")
+
+p_cor <- ggplot(cor_melted, aes(x = Location1, y = Location2, fill = Correlation)) +
+  geom_tile(color = "gray90", linewidth = 0.2) +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B",
+                       midpoint = 0,
+                       limits = c(-0.5, 1),
+                       name = "Pearson\nCorrelation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+        axis.text.y = element_text(size = 9),
+        panel.grid = element_blank()) +
+  labs(title = "Spatial Correlation Matrix: Daily Traffic Totals",
+       subtitle = paste("Mean r =", round(mean(cor_values), 3), 
+                       "| Range: [", round(min(cor_values), 3), ",", 
+                       round(max(cor_values), 3), "]"),
+       x = "", y = "") +
+  coord_fixed()
+
+print(p_cor)
+```
+```{r}
+# Find most and least correlated pairs
+cor_df <- melt(location_cor)
+cor_df <- cor_df %>% 
+  filter(Var1 != Var2) %>%
+  filter(as.character(Var1) < as.character(Var2))
+
+top_cor <- cor_df %>% arrange(desc(value)) %>% head(10)
+bottom_cor <- cor_df %>% arrange(value) %>% head(10)
+
+cat("\n## Most Correlated Location Pairs (Top 10):\n")
+print(kable(top_cor, digits = 3, 
+            col.names = c("Location 1", "Location 2", "Correlation")))
+
+cat("\n## Least Correlated Location Pairs (Bottom 10):\n")
+print(kable(bottom_cor, digits = 3, 
+            col.names = c("Location 1", "Location 2", "Correlation")))
+
+cat("\n## Key Findings:\n")
+cat("1. Moderate spatial correlation (mean r =", round(mean(cor_values), 3), ")\n")
+cat("   indicates locations are NOT perfectly synchronized\n\n")
+cat("2. Substantial variation in correlations suggests:\n")
+cat("   - Some location pairs strongly connected\n")
+cat("   - Others operate relatively independently\n")
+cat("   - Network structure exists and can be analyzed\n\n")
+cat("3. This justifies multi-level approach:\n")
+cat("   - Location-specific analysis (local patterns)\n")
+cat("   - Network-level analysis (coordinated disruptions)\n")
+```
+
+
+
+## PCA Analysis for All Locations
+```{r test-output}
+cat("Hello from cat()\n")
+print("Hello from print()")
+message("Hello from message()")
+```
+```{r test-loop}
+for (i in 1:5) {
+  message("Checking iteration ", i)
 }
 ```
 
-## Summary
+```{r pca-all-locations, fig.width=12, fig.height=8}
 
-All PCA results have been stored in the following objects:
+cat("\n## PCA Analysis: All 26 Locations\n\n")
 
-- `pca_results`: List containing all PCA objects
-- `loadings_list`: List of loading matrices for each sheet
-- `scores_list`: List of score matrices (PC coordinates) for each sheet
-- `components_list`: List of summary statistics for each sheet
+# Initialize storage
+pca_results <- list()
+loadings_list <- list()
+scores_list <- list()
+variance_explained <- list()
 
-```{r summary}
-cat("Number of sheets analyzed:", length(pca_results), "\n")
-cat("Sheet names:", paste(names(pca_results), collapse = ", "), "\n")
+# Set variance threshold
+variance_threshold <- 0.90  # Retain components explaining 90% variance
+
+for (sheet in sheet_names) {
+  cat("Location:", sheet, "\n")
+  
+  # Use already-loaded data
+  df_transposed <- data_transposed[[sheet]]  # 384 days × 288 time points
+  
+  # Perform PCA
+  pca <- prcomp(df_transposed, center = TRUE, scale. = TRUE)
+  
+  # Determine number of components to retain
+  cumvar <- cumsum(pca$sdev^2 / sum(pca$sdev^2))
+  n_comp <- which(cumvar >= variance_threshold)[1]
+  
+  cat("  Retaining", n_comp, "components (", 
+      round(cumvar[n_comp] * 100, 1), "% variance)\n")
+  
+  # Store results (ONLY retained components)
+  pca_results[[sheet]] <- pca
+  loadings_list[[sheet]] <- pca$rotation[, 1:n_comp]
+  scores_list[[sheet]] <- pca$x[, 1:n_comp]
+  variance_explained[[sheet]] <- cumvar[n_comp]
+}
+
+cat("\nPCA completed for all", length(pca_results), "locations\n")
+cat("Average components retained:", 
+    round(mean(sapply(loadings_list, ncol)), 1), "\n\n")
+```
+```{r pca-summary-table}
+cat("\n## Summary: Components Retained Per Location\n\n")
+
+# Create summary table
+summary_df <- data.frame(
+  Location = sheet_names,
+  Components = sapply(loadings_list, ncol),
+  Variance = round(unlist(variance_explained) * 100, 1)
+)
+
+print(kable(summary_df, 
+            col.names = c("Location", "Components Retained", "% Variance")))
 ```
 
-## Accessing Stored Data
+## doesn't work
+```{r pca-detailed-example, fig.width=12, fig.height=10}
+cat("\n## Detailed PCA Results: Example Location\n\n")
 
-You can access specific results using list indexing:
+# Pick first location for detailed analysis
+example_loc <- sheet_names[1]
+pca_ex <- pca_results[[example_loc]]
+n_comp_ex <- ncol(loadings_list[[example_loc]])
 
-```{r example-access, eval=FALSE}
-# Example: Access PCA results for first sheet
-first_sheet <- sheet_names[1]
-loadings_first <- loadings_list[[first_sheet]]
-scores_first <- scores_list[[first_sheet]]
-components_first <- components_list[[first_sheet]]
+cat("Analyzing:", example_loc, "\n")
+cat("Retained components:", n_comp_ex, "\n\n")
+
+# Scree plot
+ve <- summary(pca_ex)$importance[2, ]
+scree_df <- data.frame(PC = 1:length(ve), Variance = ve * 100)
+
+p_scree <- ggplot(scree_df, aes(x = PC, y = Variance)) +
+  geom_line(color = "steelblue", linewidth = 1) + 
+  geom_point(size = 3, color = "steelblue") +
+  geom_vline(xintercept = n_comp_ex, linetype = "dashed", 
+             color = "red", linewidth = 1) +
+  labs(title = paste("Scree Plot -", example_loc),
+       subtitle = paste("Red line: retained", n_comp_ex, "components"),
+       x = "Principal Component", 
+       y = "Variance Explained (%)") +
+  theme_minimal() +
+  scale_x_continuous(breaks = seq(0, 30, by = 5))
+print(p_scree)
+
+# Plot first 3 PC loadings as time profiles
+loadings_ex <- loadings_list[[example_loc]][, 1:min(3, n_comp_ex)]
+time_labels <- seq(0, 23.75, by = 5/60)
+
+loadings_long <- data.frame(
+  Time = rep(time_labels, min(3, n_comp_ex)),
+  Loading = c(loadings_ex),
+  Component = rep(paste0("PC", 1:min(3, n_comp_ex)), each = 288)
+)
+
+p_loadings <- ggplot(loadings_long, aes(x = Time, y = Loading, color = Component)) +
+  geom_line(linewidth = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  facet_wrap(~ Component, ncol = 1, scales = "free_y") +
+  labs(title = "Principal Component Loadings as Time-of-Day Profiles",
+       subtitle = example_loc,
+       x = "Hour of Day",
+       y = "Loading") +
+  scale_x_continuous(breaks = seq(0, 24, by = 4)) +
+  theme_minimal() +
+  theme(legend.position = "none")
+print(p_loadings)
+
+cat("\nInterpretation:\n")
+cat("- PC1: Overall daily pattern (baseline traffic)\n")
+cat("- PC2: Morning vs evening differential\n")
+cat("- PC3: Midday variations\n\n")
 ```
