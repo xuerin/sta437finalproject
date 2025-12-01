@@ -68,7 +68,7 @@ for (sheet in sheet_names){
   cat("\n")
     }
 
-cat("\n✓ All data loaded successfully!\n")
+cat("\n All data loaded successfully!\n")
 cat("Total locations:", length(data_list), "\n\n")
 ```
 
@@ -77,9 +77,9 @@ cat("Total locations:", length(data_list), "\n\n")
 | `data_list[[sheet]]` | Original data (rows = time points, columns = days) | `data_list[[sheet]] <- df_numeric` |
 | `data_transposed[[sheet]]` | Transposed data (rows = days, columns = time points) | `data_transposed[[sheet]] <- as.data.frame(t(df_numeric))` |
 
-✔ Stored as **named list elements** (key = sheet name)  
-✔ Access like: `data_list$Loc01`, `data_transposed$Loc15`  
-✔ Each one is a **data frame**  
+Stored as **named list elements** (key = sheet name)  
+Access like: `data_list$Loc01`, `data_transposed$Loc15`  
+Each one is a **data frame**  
 
 ## Paranoid
 ```{r}
@@ -359,15 +359,20 @@ ggplot(acf_df, aes(x = Lag, y = ACF)) +
 
 ## Time-Lagged Cross-Correlation (Lead–Lag Detection)
 ```{r time-lagged-crosscorr, fig.width=8, fig.height=5}
+set.seed(123)
+
+# Always define this BEFORE using it
+selected_locs <- sample(names(data_transposed), 2)
+
 loc1 <- selected_locs[1]
 loc2 <- selected_locs[2]
-
 cat("Analyzing lagged relationship between:", loc1, "and", loc2, "\n\n")
 
-# Extract typical daily profiles (median across days)
+# Extract median daily profiles
 day1 <- apply(data_transposed[[loc1]], 2, median)
 day2 <- apply(data_transposed[[loc2]], 2, median)
 
+# Cross-correlation
 ccf_result <- ccf(day1, day2, lag.max = 48, plot = FALSE)
 
 ccf_df <- data.frame(
@@ -375,6 +380,7 @@ ccf_df <- data.frame(
   CCF = as.numeric(ccf_result$acf)
 )
 
+# Plot CCF
 ggplot(ccf_df, aes(x = Lag, y = CCF)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
   geom_segment(aes(xend = Lag, yend = 0), color = "coral", linewidth = 1) +
@@ -384,9 +390,10 @@ ggplot(ccf_df, aes(x = Lag, y = CCF)) +
        x = "Lag (minutes)", y = "Cross-Correlation") +
   theme_minimal()
 
-# Report strongest lag
+# Highest lag
 max_idx <- which.max(abs(ccf_df$CCF))
-cat("Max correlation:", round(ccf_df$CCF[max_idx], 3), "at", ccf_df$Lag[max_idx], "minutes\n")
+cat("Max correlation:", round(ccf_df$CCF[max_idx], 3),
+    "at", ccf_df$Lag[max_idx], "minutes\n")
 ```
 
 ## Spatial correlation (correlgram)
@@ -410,7 +417,7 @@ corrplot(cor_subset, method = "color",
          title = "Spatial Correlation Among 3 Locations")
 ```
 ## Correlogram from all 26 locations
-```{r spatial-correlation-correct, fig.width=10, fig.height=10}
+```{r fig.width=10, fig.height=10}
 
 cat("\n## Spatial Correlation Structure (CORRECTED)\n\n")
 
@@ -506,7 +513,7 @@ cat("- Average profiles: Shows similarity of daily SHAPE (too high)\n")
 cat("- Daily totals: Shows if locations have busy/quiet days together (RECOMMENDED)\n")
 cat("- Full series: Most complete but computationally intensive\n")
 ```
-```{r spatial-correlation, fig.width=12, fig.height=10}
+```{r fig.width=12, fig.height=10}
 
 cat("\n## Spatial Correlation Structure Across Locations\n\n")
 
@@ -708,60 +715,522 @@ print(kable(summary_df,
             col.names = c("Location", "Components Retained", "% Variance")))
 ```
 
-## doesn't work
-```{r pca-detailed-example, fig.width=12, fig.height=10}
-cat("\n## Detailed PCA Results: Example Location\n\n")
 
-# Pick first location for detailed analysis
-example_loc <- sheet_names[1]
-pca_ex <- pca_results[[example_loc]]
-n_comp_ex <- ncol(loadings_list[[example_loc]])
+## Detect anomalies from PCA scores using boxplots
+```{r}
+cat("\n## Anomaly Detection: PCA Score Outliers\n\n")
 
-cat("Analyzing:", example_loc, "\n")
-cat("Retained components:", n_comp_ex, "\n\n")
+anomalies <- list()  # Store anomalies per location
 
-# Scree plot
-ve <- summary(pca_ex)$importance[2, ]
-scree_df <- data.frame(PC = 1:length(ve), Variance = ve * 100)
+for (sheet in sheet_names) {
+  scores <- as.data.frame(scores_list[[sheet]])
+  colnames(scores) <- paste0("PC", 1:ncol(scores))
+  
+  sheet_anomalies <- data.frame(Day = integer(), PC = character(), Score = numeric())
+  
+  for (pc in colnames(scores)) {
+    q1 <- quantile(scores[[pc]], 0.25)
+    q3 <- quantile(scores[[pc]], 0.75)
+    iqr <- q3 - q1
+    lower <- q1 - 1.5 * iqr
+    upper <- q3 + 1.5 * iqr
+    
+    flagged <- which(scores[[pc]] < lower | scores[[pc]] > upper)
+    
+    if (length(flagged) > 0) {
+      sheet_anomalies <- rbind(sheet_anomalies,
+                               data.frame(Day = flagged,
+                                          PC = pc,
+                                          Score = scores[[pc]][flagged]))
+    }
+  }
+  
+  anomalies[[sheet]] <- sheet_anomalies
+}
 
-p_scree <- ggplot(scree_df, aes(x = PC, y = Variance)) +
-  geom_line(color = "steelblue", linewidth = 1) + 
-  geom_point(size = 3, color = "steelblue") +
-  geom_vline(xintercept = n_comp_ex, linetype = "dashed", 
-             color = "red", linewidth = 1) +
-  labs(title = paste("Scree Plot -", example_loc),
-       subtitle = paste("Red line: retained", n_comp_ex, "components"),
-       x = "Principal Component", 
-       y = "Variance Explained (%)") +
+cat("Anomaly detection completed.\n\n")
+cat("Example anomalies:\n")
+print(head(anomalies[[sheet_names[1]]], 10))
+```
+
+```{r}
+
+## Plot boxplots of PC scores for sample locations
+sample_locs <- sample(sheet_names, 2)
+
+for (sheet in sample_locs) {
+  scores <- as.data.frame(scores_list[[sheet]])
+  colnames(scores) <- paste0("PC", 1:ncol(scores))
+  
+  scores_long <- scores %>%
+    mutate(Day = 1:n()) %>%
+    pivot_longer(cols = starts_with("PC"), names_to = "Component", values_to = "Score")
+  
+  p <- ggplot(scores_long, aes(x = Component, y = Score)) +
+    geom_boxplot(fill = "lightblue", alpha = 0.6) +
+    labs(title = paste("Boxplots of PC Scores -", sheet),
+         x = "Principal Component", y = "Score") +
+    theme_minimal()
+  
+  print(p)
+}
+```
+
+```{r}
+## Classify anomalies using PC loading time-of-day regimes
+
+classifications <- list()
+
+for (sheet in sheet_names) {
+  cat("\nProcessing:", sheet, "\n")
+  
+  loadings <- loadings_list[[sheet]]  # Timepoints × components
+  scores <- scores_list[[sheet]]      # Days × components
+  anomalies_df <- anomalies[[sheet]]  # Day, PC, Score
+  
+  if (nrow(anomalies_df) == 0) {
+    classifications[[sheet]] <- data.frame()
+    next
+  }
+  
+  anomaly_results <- anomalies_df %>% mutate(Regime = NA)
+  
+  for (i in 1:nrow(anomaly_results)) {
+    pc_name <- anomaly_results$PC[i]
+    pc_index <- as.numeric(gsub("PC", "", pc_name))
+    
+    pc_loading <- loadings[, pc_index]
+    peak_hour <- which.max(abs(pc_loading)) * 5 / 60
+    
+    anomaly_results$Regime[i] <- case_when(
+      peak_hour >= 6 & peak_hour < 10 ~ "Morning anomaly",
+      peak_hour >= 10 & peak_hour < 16 ~ "Afternoon anomaly",
+      peak_hour >= 16 & peak_hour < 21 ~ "Evening anomaly",
+      TRUE ~ "All-day / Off-peak anomaly"
+    )
+  }
+  
+  classifications[[sheet]] <- anomaly_results
+}
+
+cat("\nClassification COMPLETE.\n")
+print(head(classifications[[sheet_names[1]]], 10))
+```
+
+```{r}
+library(fastICA)
+
+ica_results <- list()
+
+for (sheet in sheet_names) {
+  scores <- as.data.frame(scores_list[[sheet]])  # use PCA scores
+  
+  if (ncol(scores) >= 3) {
+    ica <- fastICA(scores, n.comp = min(4, ncol(scores)), method = "C")
+    
+    ica_results[[sheet]] <- list(
+      Sources = ica$S,
+      MixingMatrix = ica$A
+    )
+    
+    cat("\nICA successful for:", sheet, 
+        "| Components extracted:", ncol(ica$S), "\n")
+  } else {
+    cat("Skipping", sheet, "- not enough components\n")
+  }
+}
+
+sheet <- sheet_names[1]  # Example
+sources <- as.data.frame(ica_results[[sheet]]$Sources)
+sources$Day <- 1:nrow(sources)
+
+sources_long <- melt(sources, id.vars = "Day", 
+                     variable.name = "IC", value.name = "Score")
+
+ggplot(sources_long, aes(x = Day, y = Score, color = IC)) +
+  geom_line() +
+  labs(title = paste("ICA Signals for", sheet),
+       x = "Day", y = "IC Score") +
+  theme_minimal()
+```
+
+
+```{r}
+ica_anomalies <- list()
+
+for (sheet in sheet_names) {
+  
+  if (!is.null(ica_results[[sheet]])) {
+    ics <- as.data.frame(ica_results[[sheet]]$Sources)
+    
+    flagged_days <- unique(unlist(
+      lapply(ics, function(ic) {
+        q1 <- quantile(ic, 0.25)
+        q3 <- quantile(ic, 0.75)
+        iqr <- q3 - q1
+        lower <- q1 - 1.5 * iqr
+        upper <- q3 + 1.5 * iqr
+        which(ic < lower | ic > upper)
+      })
+    ))
+    
+    ica_anomalies[[sheet]] <- if (length(flagged_days) > 0) {
+      data.frame(Day = flagged_days, Method = "ICA")
+    } else {
+      data.frame(Day = numeric(0), Method = character(0))
+    }
+  } else {
+    ica_anomalies[[sheet]] <- data.frame(Day = numeric(0), Method = character(0))
+  }
+}
+
+cat("\nICA anomaly detection complete.\n")
+print(head(ica_anomalies[[sheet_names[1]]]))
+
+```
+
+```{r}
+plot_IC_loading_profiles <- function(sheet) {
+  mixing_matrix <- as.data.frame(ica_results[[sheet]]$MixingMatrix)
+  mixing_matrix$Time <- 1:nrow(mixing_matrix)
+  
+  mixing_long <- reshape2::melt(mixing_matrix, id.vars = "Time",
+                                variable.name = "IC", value.name = "Loading")
+  
+  ggplot(mixing_long, aes(x = Time, y = Loading, color = IC)) +
+    geom_line(linewidth = 1.2) +
+    labs(title = paste("ICA Loading Shape (Temporal Regimes):", sheet),
+         x = "Time of Day (5-min intervals)", y = "Component Weight") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+}
+
+plot_IC_loading_profiles(sheet_names[3])
+
+
+```
+
+```{r}
+sheet <- sheet_names[1]
+A <- ica_results[[sheet]]$MixingMatrix
+
+A_df <- melt(A)
+colnames(A_df) <- c("Variable", "IC", "Weight")
+
+ggplot(A_df, aes(x = IC, y = Variable, fill = Weight)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#619CFF", mid = "white", high = "#F8766D") +
+  labs(title = paste("ICA Mixing Matrix Heatmap:", sheet),
+       x = "Independent Component", 
+       y = "Variables / Time Segments") +
   theme_minimal() +
-  scale_x_continuous(breaks = seq(0, 30, by = 5))
-print(p_scree)
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-# Plot first 3 PC loadings as time profiles
-loadings_ex <- loadings_list[[example_loc]][, 1:min(3, n_comp_ex)]
-time_labels <- seq(0, 23.75, by = 5/60)
+```
 
-loadings_long <- data.frame(
-  Time = rep(time_labels, min(3, n_comp_ex)),
-  Loading = c(loadings_ex),
-  Component = rep(paste0("PC", 1:min(3, n_comp_ex)), each = 288)
-)
+```{r}
+valid_sheets <- names(ica_results)[sapply(ica_results, function(x) !is.null(x$Sources))]
 
-p_loadings <- ggplot(loadings_long, aes(x = Time, y = Loading, color = Component)) +
-  geom_line(linewidth = 1) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
-  facet_wrap(~ Component, ncol = 1, scales = "free_y") +
-  labs(title = "Principal Component Loadings as Time-of-Day Profiles",
-       subtitle = example_loc,
-       x = "Hour of Day",
-       y = "Loading") +
-  scale_x_continuous(breaks = seq(0, 24, by = 4)) +
-  theme_minimal() +
-  theme(legend.position = "none")
-print(p_loadings)
+if (length(valid_sheets) > 0) {
 
-cat("\nInterpretation:\n")
-cat("- PC1: Overall daily pattern (baseline traffic)\n")
-cat("- PC2: Morning vs evening differential\n")
-cat("- PC3: Midday variations\n\n")
+  sheet <- valid_sheets[1]
+  ics <- as.data.frame(ica_results[[sheet]]$Sources)
+  ics$Day <- 1:nrow(ics)
+
+  # Reshape safely using pivot_longer — avoids melt errors
+  ics_long <- ics %>%
+    select(Day, starts_with("V")) %>%   # or rename IC1, IC2, etc.
+    mutate(across(starts_with("V"), as.numeric)) %>%
+    pivot_longer(cols = -Day,
+                 names_to = "IC",
+                 values_to = "Score")
+
+  # Plot
+  ggplot(ics_long, aes(x = Day, y = Score, color = IC)) +
+    geom_line(size = 0.8) +
+    labs(title = paste("ICA Component Signals:", sheet),
+         x = "Day", y = "Signal Strength") +
+    theme_minimal()
+}
+
+```
+
+```{r}
+n <- 300
+Z <- matrix(runif(2*n, -sqrt(3), sqrt(3)), n, 2)
+L <- matrix(c(1,2,3,4), 2, 2)
+X <- scale(Z %*% L, center = TRUE, scale = FALSE)
+
+pca <- prcomp(X)
+ica <- fastICA(X, n.comp = 2)
+
+df <- as.data.frame(X); colnames(df) <- c("x1","x2")
+
+ggplot(df, aes(x1,x2)) +
+  geom_point(alpha = 0.5) +
+  geom_segment(aes(x=0, y=0, xend=pca$rotation[1,1]*3, yend=pca$rotation[2,1]*3),
+               arrow=arrow(length=unit(0.3,"cm")), color="blue", size=1.2) +
+  geom_segment(aes(x=0, y=0, xend=ica$A[1,1]*3, yend=ica$A[2,1]*3),
+               arrow=arrow(length=unit(0.3,"cm")), color="red", size=1.2) +
+  labs(title="PCA vs ICA Component Directions",
+       subtitle="PCA: variance-maximizing | ICA: statistically-independent",
+       x="x1", y="x2") +
+  theme_minimal()
+```
+
+```{r}
+# Merge PCA and ICA anomalies into a unified table
+library(dplyr)
+
+combined_anomalies <- list()
+
+for (sheet in sheet_names) {
+  
+  # PCA anomalies (may include PC and Score)
+  pca_df <- anomalies[[sheet]]
+  
+  # ICA anomalies (only Day + Method)
+  ica_df <- ica_anomalies[[sheet]]
+  
+  # Standardize PCA columns
+  if (!is.null(pca_df) && nrow(pca_df) > 0) {
+    pca_df <- pca_df %>%
+      mutate(Method = paste("PCA", PC)) %>%  # e.g., "PCA PC1"
+      select(Day, Method, PC, Score)         # Keep consistent order
+  }
+
+  # Standardize ICA columns — add missing ones
+  if (!is.null(ica_df) && nrow(ica_df) > 0) {
+    ica_df <- ica_df %>%
+      mutate(PC = NA, Score = NA) %>%        # Add missing columns
+      select(Day, Method, PC, Score)         # Same column order
+  }
+
+  # Combine safely (works even if one is empty)
+  combined <- bind_rows(pca_df, ica_df)
+  
+  # Sort by day
+  combined <- combined[order(combined$Day), ]
+  
+  combined_anomalies[[sheet]] <- combined
+}
+
+# Show example
+kable(head(combined_anomalies[[sheet_names[3]]], 10))
+
+```
+
+```{r}
+library(gridExtra)
+
+plot_PCA_vs_ICA <- function(sheet) {
+  
+  # PCA smoothed component (first PC)
+  pca_scores <- as.data.frame(scores_list[[sheet]])
+  pca_scores$Day <- 1:nrow(pca_scores)
+  
+  p_pca <- ggplot(pca_scores, aes(x = Day, y = PC1)) +
+    geom_line(color = "steelblue", size = 0.8) +
+    labs(title = paste("PCA (Smooth Regime Signal):", sheet),
+         y = "PC1 Score", x = "Day") +
+    theme_minimal()
+  
+  # ICA spike component (IC1)
+  ics <- as.data.frame(ica_results[[sheet]]$Sources)
+  ics$Day <- 1:nrow(ics)
+  
+  p_ica <- ggplot(ics, aes(x = Day, y = V1)) +
+    geom_line(color = "firebrick", size = 0.8) +
+    labs(title = paste("ICA (Spike Event Signal):", sheet),
+         y = "IC1 Score", x = "Day") +
+    theme_minimal()
+  
+  grid.arrange(p_pca, p_ica, ncol = 2)
+}
+
+plot_PCA_vs_ICA(sheet_names[3])  # pick one location
+```
+
+```{r}
+sheet <- sheet_names[3]  # Example location
+
+A <- as.data.frame(ica_results[[sheet]]$MixingMatrix)
+A$Time <- 1:nrow(A)
+
+A_long <- tidyr::pivot_longer(A,
+                              cols = -Time,
+                              names_to = "IC",
+                              values_to = "Loading")
+
+ggplot(A_long, aes(x = IC, y = Time, fill = Loading)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B") +
+  labs(title = paste("ICA Temporal Loading Heatmap:", sheet),
+       subtitle = "Identifies when each IC is active (event localization)",
+       x = "Independent Component", y = "Time Index") +
+  theme_minimal()
+```
+
+## ICA on not PC loadings
+
+```{r}
+
+
+cat("\n## ICA Analysis: All 26 Locations\n\n")
+
+# Initialize storage for ICA results
+ica_results_direct <- list()
+
+for (sheet in sheet_names) {
+  cat("Location:", sheet, "\n")
+  
+  # 1. Load the RAW data matrix for the current sheet, mimicking PCA data access
+  X_raw <- data_transposed[[sheet]]
+  
+  # 2. Get the number of components determined by the PCA's 90% variance threshold
+  # This uses the same dimensionality reduction level as your PCA.
+  n_comp <- ncol(scores_list[[sheet]])
+  P <- ncol(X_raw)
+  
+  # Safety check: Ensure the data is valid and has enough dimensions
+  if (is.null(X_raw) || nrow(X_raw) == 0 || P < 3) {
+      cat("  Skipping", sheet, "- Data is NULL, empty, or has < 3 columns.\n")
+      next 
+  }
+  
+  # Safety check: Ensure the determined n_comp is feasible
+  if (n_comp < 2 || n_comp > P) {
+      n_comp_used <- min(4, P) # Fallback if PCA result is odd
+      cat(paste("  Warning: PCA n_comp was unusual. Using fallback:", n_comp_used, "components.\n"))
+  } else {
+      n_comp_used <- n_comp
+      cat("  Using PCA-determined dimensionality:", n_comp_used, "components.\n")
+  }
+
+  # 3. Center the data
+  # fastICA will perform the required whitening/scaling internally.
+  X_centered <- scale(X_raw, center = TRUE, scale = FALSE)
+  
+  # 4. Run fastICA with the centered raw data
+  # The n.comp argument handles the dimensionality reduction (PCA) internally
+  ica <- fastICA(
+    X_centered, 
+    n.comp = n_comp_used, 
+    method = "C" # Symmetric/parallel algorithm
+  )
+  
+  # 5. Store the results (S: Independent Sources / A: Mixing Matrix)
+  ica_results_direct[[sheet]] <- list(
+    Sources = ica$S,
+    MixingMatrix = ica$A
+  )
+  
+  cat("  ICA successful. Extracted:", ncol(ica$S), "components.\n")
+}
+
+cat("\nICA completed for all valid locations.\n")
+```
+
+```{r}
+plot_IC_time_series <- function(ica_results_list, sheet) {
+  
+  if (is.null(ica_results_list[[sheet]])) return(NULL)
+  
+  # Extract the Sources (S matrix)
+  ics <- as.data.frame(ica_results_list[[sheet]]$Sources)
+  colnames(ics) <- paste0("IC", 1:ncol(ics))
+  ics$Time <- 1:nrow(ics)
+  
+  # Reshape to long format for ggplot
+  ics_long <- ics %>%
+    pivot_longer(cols = starts_with("IC"),
+                 names_to = "Component",
+                 values_to = "Score")
+  
+  # Plot
+  ggplot(ics_long, aes(x = Time, y = Score, color = Component)) +
+    geom_line(size = 0.8) +
+    labs(title = paste("ICA Component Signals (Independent Time Courses):", sheet),
+         x = "Time Index (Day/Interval)", y = "Signal Score") +
+    theme_minimal() +
+    facet_wrap(~Component, scales = "free_y")
+}
+
+cat("\n## Example: Independent Component Time Series\n")
+plot_IC_time_series(ica_results_direct, sheet_names[1])
+```
+
+```{r}
+plot_IC_anomalies <- function(ica_results_list, sheet, ic_to_plot = 1) {
+  
+  if (is.null(ica_results_list[[sheet]])) return(NULL)
+  
+  # Extract the target IC
+  ics <- as.data.frame(ica_results_list[[sheet]]$Sources)
+  if (ic_to_plot > ncol(ics)) ic_to_plot <- 1 # Fallback to IC1
+  
+  target_ic_name <- paste0("IC", ic_to_plot)
+  target_ic <- ics[, ic_to_plot]
+  
+  # IQR Anomaly Detection (1.5 * IQR Rule)
+  q1 <- quantile(target_ic, 0.25)
+  q3 <- quantile(target_ic, 0.75)
+  iqr <- q3 - q1
+  lower <- q1 - 1.5 * iqr
+  upper <- q3 + 1.5 * iqr
+  
+  # Create a data frame for plotting
+  plot_data <- data.frame(
+    Time = 1:length(target_ic),
+    Score = target_ic,
+    Anomaly = ifelse(target_ic < lower | target_ic > upper, target_ic, NA)
+  )
+  
+  # Plot
+  ggplot(plot_data, aes(x = Time, y = Score)) +
+    geom_line(color = "gray60") +
+    geom_point(data = dplyr::filter(plot_data, !is.na(Anomaly)), 
+               aes(y = Anomaly), color = "red", size = 2) +
+    labs(title = paste("Anomalies Flagged in IC", ic_to_plot, "for", sheet),
+         x = "Time Index (Day/Interval)", y = "IC Score") +
+    theme_minimal()
+}
+
+cat("\n## Example: IC Anomaly Detection Plot\n")
+plot_IC_anomalies(ica_results_direct, sheet_names[1], ic_to_plot = 3)
+```
+
+```{r}
+library(ggplot2)
+library(reshape2) 
+library(viridis)
+
+plot_mixing_matrix_heatmap <- function(ica_results_list, sheet) {
+  
+  if (is.null(ica_results_list[[sheet]])) return(NULL)
+  
+  A <- as.data.frame(ica_results_list[[sheet]]$MixingMatrix)
+  colnames(A) <- paste0("IC", 1:ncol(A))
+  
+  # Assuming rows of A are the 288 time segments (0 to 287)
+  A$Time_Segment <- 1:nrow(A) 
+  
+  # Reshape to long format for ggplot
+  A_df <- melt(A, id.vars = "Time_Segment", 
+               variable.name = "IC", 
+               value.name = "Weight")
+  
+  ggplot(A_df, aes(x = IC, y = Time_Segment, fill = Weight)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B", name = "Weight") +
+    labs(title = paste("ICA Mixing Matrix Heatmap (Temporal Loadings):", sheet),
+         x = "Independent Component", 
+         y = "Time Segment (e.g., 5-min Interval Index)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+          axis.text.y = element_blank()) # Hide y-axis labels for 288 segments
+}
+
+cat("\n## Example: Mixing Matrix Heatmap\n")
+plot_mixing_matrix_heatmap(ica_results_direct, sheet_names[1])
 ```
