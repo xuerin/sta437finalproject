@@ -15,35 +15,92 @@ nocite: '@*'
 link-citations: true
 ---
 ## Introduction
-Given the unavoidable nature of traffic congestion in urban locations, studying its patterns and underlying dynamics enables the daily commuter as well as transportation authorities to transition from reactive management to proactive intervention, leading to reduced congestion, lower emissions and improved commuter safety around high-density areas. However, accurately detecting and predicting anomalies that cause significant delays remains a challenge due to the inherent complexity of traffic dynamics, which are continuous, stochastic, spatiotemporally autocorrelated and highly cross-correlated at the network level [@columbia_spatiotemporal]. 
+Due to the unavoidable nature of traffic congestion in urban locations, studying its patterns and underlying dynamics enables daily commuters and transportation authorities to transition from reactive management to proactive intervention, leading to overall reduced congestion, lower emissions and improved commuter safety around high-density areas. However, accurately detecting and predicting traffic anomalies that cause significant delays remains a challenge due to the inherent complexity of traffic dynamics, which are continuous, stochastic, spatiotemporally autocorrelated and cross-correlated at the network level [@columbia_spatiotemporal]. 
 
-As existing studies have evolved from interval-based pointwise prediction of univariate time-series data to a functional approach at network-level prediction with neural networks [@ma2024network], this project offers a comparative assessment of common multivariate statistical techniques that are highly interpretable as benchmarks for further study. The goal of this project is to identify and classify location-specific anomalies from the intraday pattern of traffic volume flow collected across 26 monitoring sites around the University of Toronto by comparing principal component analysis (PCA), factor analysis (FA), and independent component analysis (ICA) methods, which are selected for their ability to achieve dimension reduction, interpret latent regimes, and isolate mixed data components. 
+As existing prediction has evolved from interval-based pointwise in univariate time-series data to a functional approach at the network-level utilizing neural networks [@ma2024network], this project offers a comparative assessment of common multivariate statistical techniques that are highly interpretable as benchmarks for further study. The goal of this paper is to identify and classify location-specific anomalies from the intraday patterns of traffic volume flow collected across 26 monitoring sites around the University of Toronto by comparing principal component analysis (PCA), factor analysis (FA), and independent component analysis (ICA) methods, which are selected for their ability to achieve dimension reduction, interpret latent regimes, and isolate mixed data components. 
 
 ## Data Description
-The dataset, synthetically modeled from @ma2024network, has a natural tensor structure consisting of 26 locations, 384 days each, and 288 five-minute time points per day. Then each slice $X \in \mathbb{R^{n \times p}}$, called the daily traffic matrix, corresponds to one location and forms a $384 \times 288$ matrix. There are no missing values and the dimensions are uniform. 
+The dataset, synthetically modeled from @ma2024network, has a natural tensor structure consisting of 26 locations ($l$), 384 ($n$) days each, and 288 ($p$) five-minute time points per day. Then each slice $X \in \mathbb{R^{n \times p}}$, called the daily traffic matrix, corresponds to one location and forms a $384 \times 288$ matrix. 
 
+There are no missing values and the dimensions are uniform, so there was no data cleaning to be done. Matrices were transposed so that rows corresponded to days and columns to time points. Exploratory analysis prior to the application of PCA, FA and ICA focuses on understanding the distributional properties of the daily profiles, temporal regularities and recurrent patterns and spatial correlations among locations.
+
+To visualize day-to-day variability at individual locations, spaghetti plots of daily profiles were generated. These plots reveal the typical diurnal traffic structure characterized by morning and evening peaks.
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(ggplot2)
+library(openxlsx)
+file <- "traffic.xlsx"
+sheet_names <- getSheetNames(file)
+num_sheets <- length(sheet_names)
+set.seed(67)
+df <- lapply(sheet_names, function(sheet) {
+  as.matrix(read.xlsx(file, sheet = sheet, colNames = TRUE))
+})
+
+names(df) <- sheet_names
+set.seed(67)
+```
+
+```{r spaghetti}
+sample_sheets <- sample(names(data_list), 3)
+spaghettis_locations <- list()
+for (sheet in sample_sheets) {
+  
+  #Spaghetti
+  df_t <- data_transposed[[sheet]] %>%
+    mutate(Day = 1:n()) %>%
+    pivot_longer(cols = -Day, names_to = "Time", values_to = "Value") %>%
+    mutate(Time = as.numeric(Time))
+
+  p2 <- ggplot(df_t, aes(x = Time, y = Value, group = Day)) +
+    geom_line(alpha = 0.2) +
+    labs(title = paste("Daily Traffic Flow Patterns:", sheet),
+         x = "Time (5-min intervals)", y = "Traffic Volume") +
+    theme_minimal()
+
+  spaghettis_locations[[sheet]] <- p2
+}
+print(wrap_plots(spaghettis_locations, ncol = 1))
+
+```
 ## Methodology
-The dataset is high-dimensional, functional (recall $p=288$ time points per day), and correlated, so the ideal methods reduce dimensionality while preserving intepretable time-of-day structure .
+The traffic dataset is high-dimensional, functional in nature (with $p=288$ time points per day), and exhibits substantial temporal dependence.
 
-PCA is the core method used in this project because each daily traffic profile is a $p =288$ dimensional vector, and PCA assumes that although each data point $x_i$ lives in a higher dimension $\mathbb{R}^p$, the structure of the data lies on a low dimensional manifold, as such, smooth daily traffic regimes. This is also the main step in functional outlier detection procedure, to express curves in a basis, and PCA is the most computationally efficient. For each location, the $384 \times 288$ traffic matrix was transposed so that rows were days and columns were time points. PCA was run on the centered daily traffic matrix, $X_c = X - \mathbf{1}_n\bar{x}^T$. Then, $V= [v_1,..., v_p]$ is the orthonormal principal directions (loadings, also the empirical basis functions for each location), $X_CV$ contains the associated scores, and the $j$-th principal score for the day $i$ is $s_{ij} = X_{c,i}^T {v_j}$. The number of retained components $k$ was chosen by the $90%$ variance-explained criterion: $\frac{\Sigma_{j=1}^{k}\lambda_j}{\Sigma_{j=1}^{p}\lambda_j} \geq 0.90$, where $\lambda_j = \sigma_j^2$ is the variance explained by the component j, which can be obtained through eigendecomposition of the sample covariance matrix. This balances capturing major cycles and discards higher-frequency noise. 
+Consequently, dimension reduction constitutes a fundamental component of the anomaly detection framework with PCA serving as the primary dimension-reduction mechanism, as each daily traffic profile is represented by a matrix $X \in \mathbb{R}^{n \times p}$, and PCA assumes that although each curve $x_i$ lies in a high-dimensional ambient space $\mathbb{R}^p$, its intrinsic variation is concentrated on a low-dimensional manifold. This representation is consistent with standard functional data analysis practice, where curves are expressed in a reduced basis and where PCA provides a computationally efficient empirical basis for large-scale datasets.
 
-Anomalies were identified directly from the PCA score matrix, $S=[s_{ij}] \in \mathbb{R^{n\times k}}$, because PCA scores are uncorrelated. Since outliers often manifest as extreme component-wise deviations in specific principal components, for each component $j$, the $1.5 \times IQR$ rule was applied to identify outliers. A day $i$ is flagged as an anomaly if $s_{ij} < Q_1 -1.5IQR$ or  $s_{ij} > Q_3 +1.5IQR$ for any principal component $j$. In comparison to Mahalanobis distance, the boxplot method is robust enough to not assume normality and is standard in functional data outlier detection, which is important as PC scores are not guaranteed to be multivariate normally distributed. Boxplots give interpretable, location-specific anomaly sets that can be classified by time-of-day (@shang2010exploratory). 
+For each location, the $384 \times 288$ traffic matrix $X$ was transposed so that rows corresponded to days and columns to time points. PCA was then conducted on the centered traffic matrix, $X_c = X - \mathbf{1}_n \bar{x}^{\mathsf{T}}$, where \(\bar{x}\) denotes the sample mean profile. Let $V = [v_1, \ldots, v_p]$ denote the orthonormal loading functions (the empirical eigenbasis), and let $S = X_c V$ denote the corresponding score matrix. The score of day $i$ on component $j$ is given by $s_{ij} = X_{c,i}^{\mathsf{T}} v_j$. The number of retained components \(k\) was selected via the 90\% variance-explained criterion: $\frac{\sum_{j = 1}^{k} \lambda_j}{\sum_{j = 1}^{p} \lambda_j} \ge 0.90$, where $\lambda_j = \sigma_j^2$ denotes the variance explained by component $j$, which can be obtained through the squared singular values of the sample covariance matrix. This process highlights major regimes, like a morning peak, and discards higher-frequency noise.
 
-FA is another dimension reduction method, although it assumes that observed random vectors $x$ are generated from latent random vectors called $z$, then, the covariance amongst variables is due to the influence of latent variables. FA is stricter about the rank of its sample covariance matrix, which needs to be full-rank and invertible, so in practice FA is always done via estimating covariance via iterated PCA until the variances of the error terms converge. Then we obtain latent factor scores and factor loadings. 
+Then anomalies were identified directly from the PCA score matrix $S \in \mathbb{R}^{n \times k}$ as PCA scores are uncorrelated and form an orthogonal basis. For each component $j$, a day $i$ was flagged as anomalous if $s_{ij} < Q_{1,j} - 1.5\,\mathrm{IQR}_j$ or $s_{ij} > Q_{3,j} + 1.5\,\mathrm{IQR}_j$, where $Q_{1,j}$, $Q_{3,j}$, and $\mathrm{IQR}_j$ denotes the first quartile, third quartile, and interquartile range of component $j$ respectively. In comparison to Mahalanobis-distance methods, this boxplot method is robust enough to not assume normality and is standard in functional data outlier detection, which is important as PC scores are not guaranteed to be multivariate normally distributed (MVN). Boxplots give interpretable, location-specific anomaly sets that can be classified by time-of-day [@shang2010exploratory].
 
-FA anomalies were also detected using the same $1.5 \times IQR$ rule applied to the factor score matrix $F$. Different covariance structures are being compared, especially as the original sample covariance matrix is low-rank. FA is not variance maximizing, but instead models latent factors, so intuitively FA anomalies reflect days whose pattern is inconsistent with the latent factors even if their variance is not large (for example, shifted peaks), meanwhile PCA anomalies can be intuitively thought of as being able to capture volume deviations along the main directions where the data usually varies (for example, huge spikes due to an accident).
+FA provides an alternative dimension-reduction framework. FA postulates that an observed random vector $x$ satisfies $x = \Lambda z + \varepsilon$, where $z$ is a lower-dimensional latent vector, $\Lambda$ is a loading matrix (factor scores and loadings), and $\varepsilon$ represents idiosyncratic noise. FA requires a full-rank, invertible sample covariance matrix; estimation therefore proceeds via iterated PCA and not on the raw data, until uniqueness variances converge.
 
-As a brief extension, ICA was applied to the PCA scores to extract independent signals that have mixed together in the raw time-series [@hyvarinen2000ica]. ICA is unstable when applied to highly correlated features as well, because it assumes an uncorrelated covariance matrix ($I$), so it requires inputs be whitened, dimension-reduced and variance-normalized, which is exactly what PCA does. The scores, called source signals $S$, loadings, called the mixing matrix $A$, were obtained. 
+FA anomalies were also detected using the same $1.5 \times IQR$ rule applied to the factor score matrix $F$, where $f_{ij} < Q_{1,j} - 1.5\,\mathrm{IQR}_j$ or $f_{ij} > Q_{3,j} + 1.5\,\mathrm{IQR}_j$. Because FA captures deviations from latent structural factors rather than maximizing total variance, FA anomalies correspond to days whose patterns violate the inferred latent structure like shifted peaks, whereas PCA anomalies reflect variance-aligned distortions like spikes associated with incidents.
 
-ICA anomalies were detected with the same  $1.5 \times IQR$ rule applied to the source scores $S$. Intuitively, ICA anomalies represent rare independent micro-events that sharply distort the traffic curve of a different location, for example a sudden dip/spike that only lasts a few intervals that PCA smooths out or odd jumps that FA distributes across factors and randomness. 
+ICA was applied to the PCA scores to extract statistically independent latent signals embedded within the traffic profiles. ICA assumes whitened inputs with identity covariance and therefore requires PCA preprocessing, like in FA [@hyvarinen2000ica]. ICA yields the decomposition $S_{\text{PCA}} = A S_{\text{ICA}}$, where $S_{\text{ICA}}$ contains the source signals (scores) and $A$ is the mixing matrix (loadings).
 
-Following their indentification through the methods above, the anomalies were clustered in their 2D principal component space via k-means clustering, due to the range of principal components of the anomalies. K-means was also selected because ofits suitability for continuous feature space as it partitions by Euclidean distance as well as its computational efficiency as an unsupervised learning algorithm [@piech2013kmeans]. The number of clusters $k$ was determined by calculating the average silhouette coefficient after computed on each anomaly $i$ out of $N$ anomalies, $k= \operatorname{arg\,max}_k \frac{1}{N} \Sigma_{i=1}^{N} \frac{b(i)-a(i)}{max(a(i), b(i))}$, the inner functions are the average distance from one observation to all others in its assigned cluster and the minimum average distance to observations in any other cluster [@rousseeuw1987silhouettes]. 
+ICA anomalies were detected via the same $1.5 \times \mathrm{IQR}$ rule applied to the independent source scores. Intuitively, ICA anomalies represent rare independent micro-events that sharply distort the traffic curve of a different location, for example a sudden dip/spike that only lasts a few intervals that PCA smooths out, or odd jumps that FA distributes across factors and randomness. 
+
+All anomalies identified across PCA, FA, and ICA were projected onto their two-dimensional principal component subspace and partitioned using k-means clustering [@piech2013kmeans]. This method was selected for its computational efficiency and suitability for continuous Euclidean feature spaces. The number of clusters was chosen by maximizing the average silhouette coefficient: $k^\ast = \arg\max_k \left\{\frac{1}{N} \sum_{i=1}^{N} \frac{b(i) - a(i)}{\max\{a(i), b(i)\}} \right\}$, where $a(i)$ is the average within-cluster distance and $b(i)$ is the minimum average between-cluster distance [@rousseeuw1987silhouettes]. This procedure yields interpretable groups of anomalies that reflect distinct structural perturbations in daily traffic dynamics. Taken together, PCA, FA, and ICA form a benchmark set: PCA captures global variance-driven deviations, FA captures structural inconsistencies relative to latent factors, and ICA captures independent localized perturbations. Using all three offers a comprehensive view of anomalous behavior from orthogonal interpretive perspectives: variance, latent structure, and independence. This ensures that anomalies detected are robust to modeling assumptions and interpretable in terms of their functional, temporal, and structural characteristics.
 
 ## Results
 
+
 ## Discussion 
 Traffic dynamics can be intuitively viewed by their diurnal patterns, such as the sharp volume peaks observed during morning and evening rush hours. Conversely, traffic anomalies include deviations from these established norms, such as a sudden isolated car accident, holiday traffic, or systemic events like severe weather closures. Distinguishing these routine fluctuations from true anomalous events requires multivariate methods capable of decomposing the aggregate traffic flow into its underlying normal and abnormal source signals. Different multivariate decompositions reveal 
-
+The three dimension-reduction methods—PCA, FA, and ICA—were employed jointly 
+because they provide complementary and interpretable decompositions of the daily 
+traffic profiles. PCA serves as a variance-maximizing benchmark: it extracts the dominant 
+modes of variation and therefore identifies anomalies aligned with the primary directions 
+along which traffic curves typically fluctuate. In contrast, FA models the covariance 
+structure through latent common factors, yielding anomalies that deviate from the inferred 
+low-rank dependence structure even when their total variance is modest. FA therefore 
+acts as a structural benchmark that captures shifts in temporal pattern, peak timing, or 
+shape-based distortions not necessarily associated with high variance. ICA provides an 
+independent-signal benchmark by separating statistically independent micro-events 
+embedded within the curves. Because ICA isolates localized or abrupt disturbances that 
+PCA smooths and FA distributes across factors, it is particularly sensitive to short-lived 
+spikes, dips, and irregularities.
 ## Appendix
 
 

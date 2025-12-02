@@ -25,6 +25,7 @@ file <- "traffic.xlsx"
 sheet_names <- getSheetNames(file)
 print(sheet_names)
 num_sheets <- length(sheet_names)
+
 ```
 
 ## Cleaning, summary stats, graphs by location
