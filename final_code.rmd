@@ -228,7 +228,7 @@ for (loc_name in names(location_results)) {
 ```
 
 ## Plot PCA Loadings
-```{r plot-pca-loadings, eval=FALSE}
+```{r plot-pca-loadings}
 plot_pca_loadings <- function(res, loc_name, n_comp = 3) {
   loadings <- res$pca_loadings[, 1:min(n_comp, ncol(res$pca_loadings)), drop = FALSE]
   
@@ -259,7 +259,7 @@ for (loc_name in names(location_results)) {
 ```
 
 ## View Anomalies with Boxplot
-```{r plot-pca-boxplot, eval=FALSE}
+```{r plot-pca-boxplot}
 plot_pca_score_boxplot <- function(res, loc_name, include_fa = FALSE) {
   scores <- res$pca_scores
   days <- rownames(scores)
@@ -304,7 +304,7 @@ for (loc_name in names(location_results)) {
 ```
 
 ## Anomalies overlay boxplot with labels
-```{r overlay, eval=FALSE}
+```{r overlay}
 overlay <- function(res, loc_name, include_fa = FALSE) {
   scores <- res$pca_scores
   days <- rownames(scores)
@@ -363,7 +363,7 @@ ggplot(df_long, aes(x = PC, y = Score)) +
 ```
 
 ## visualize ica loadings
-```{r ica-loadings, eval=FALSE}
+```{r ica-loadings}
 ## ICA Source Loadings Plot
 plot_ica_loadings <- function(res, loc_name, max_plot_comp = 4) { 
   if (is.null(res$ica) || is.null(res$ica$A) || ncol(res$ica$A) == 0) {
@@ -410,7 +410,7 @@ for (loc_name in names(location_results)) {
 }
 ```
 ## Better: Plot Anomalous Days vs Normal Days
-```{r plot-anomalies-vs-normal, eval=FALSE}
+```{r plot-anomalies-vs-normal}
 anomaly_timeline <- function(res, loc_name) {
   all_days <- rownames(res$pca_scores)
   df_timeline <- data.frame(DayName = all_days, DayIndex = 1:length(all_days))
@@ -531,7 +531,7 @@ print(summary_df)
 ```
 
 ## Stacked bar chart of anomaly counts
-```{r barchart, eval=FALSE}
+```{r barchart}
 df_long_summary <- summary_df %>%
   pivot_longer(cols = c(PCA_Only, FA_Only, ICA_Only,
                         PCA_FA, PCA_ICA, FA_ICA, All_Three),
@@ -611,7 +611,7 @@ ggplot(df_long_summary, aes(x = Location, y = Proportion, fill = AnomalyType)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 ## component loadings heatmap
-```{r loadingsheatmap, eval=FALSE}
+```{r loadingsheatmap}
 # R Code for Component Loadings Heatmap (Example: Loc1):
 
 loc_name <- names(location_results)[1]
@@ -724,7 +724,7 @@ for (loc_name in names(location_results)) {
 
 
 ## ICA boxplots
-```{r ica-boxplots, eval=FALSE}
+```{r ica-boxplots}
 ## ICA Source Score Boxplot with Anomalies
 plot_ica_score_boxplot <- function(res, loc_name, anomaly_coef = 1.5) {
   # Use res$ica_scores NOT res$ica$S!
@@ -797,7 +797,7 @@ for (loc_name in names(location_results)) {
 ```
 
 ## FA loadings
-```{r fa-loadings, eval=FALSE}
+```{r fa-loadings}
 ## FA Factor Loadings Plot
 plot_fa_loadings <- function(res, loc_name) {
   if (is.null(res$fa_loadings)) {
@@ -1021,4 +1021,101 @@ for (loc_name in names(location_results)) {
     )
   )
 }
+```
+
+```{r cluster-original-pattern-anomali}
+# Step 1: Find minimum number of PCs across all locations
+# (so we can align all anomalies to the same feature space)
+min_k <- min(sapply(location_results, function(res) res$k_pca))
+cat("Minimum PCs available:", min_k, "\n")
+
+# Step 2: Collect all anomalies with ALIGNED number of PCs
+all_anomalies_list <- lapply(location_results, function(res) {
+  all_anom_days <- union(union(res$pca_anom_days, res$fa_anom_days), res$ica_anom_days)
+  
+  if (length(all_anom_days) > 0) {
+    # Extract scores for anomalous days, use only first min_k PCs
+    scores <- res$pca_scores[rownames(res$pca_scores) %in% all_anom_days, 1:min_k, drop = FALSE]
+    
+    data.frame(
+      Day = rownames(scores),
+      Location = res$location,
+      scores,
+      stringsAsFactors = FALSE
+    )
+  } else {
+    NULL
+  }
+})
+
+# Remove NULL entries
+all_anomalies_list <- Filter(Negate(is.null), all_anomalies_list)
+
+# Now rbind should work (all have same number of columns)
+all_anomalies <- do.call(rbind, all_anomalies_list)
+rownames(all_anomalies) <- NULL  # Reset rownames
+
+cat("Total anomalies collected:", nrow(all_anomalies), "\n")
+print(head(all_anomalies))
+
+# Step 3: Extract just the scores for clustering
+anomaly_scores <- all_anomalies[, -(1:2)]  # Remove Day and Location
+
+# Step 4: Find optimal K using silhouette method
+silhouette_scores <- data.frame(K = integer(), Silhouette = double())
+
+for (k in 2:min(6, nrow(anomaly_scores) - 1)) {
+  km <- kmeans(scale(anomaly_scores), centers = k, nstart = 25)
+  sil <- silhouette(km$cluster, dist(scale(anomaly_scores)))
+  silhouette_scores <- rbind(silhouette_scores,
+                             data.frame(K = k, Silhouette = mean(sil[, 3])))
+}
+
+print(silhouette_scores)
+
+best_k <- silhouette_scores$K[which.max(silhouette_scores$Silhouette)]
+cat("Best K:", best_k, "\n")
+
+# Step 5: Run final k-means with best K
+km_anomalies <- kmeans(scale(anomaly_scores), centers = best_k, nstart = 25)
+
+# Step 6: Add cluster assignments
+all_anomalies$Cluster <- as.factor(km_anomalies$cluster)
+
+head(all_anomalies, 10)
+
+# Step 7: Plot silhouette scores
+ggplot(silhouette_scores, aes(x = K, y = Silhouette)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(size = 3, color = "red") +
+  geom_text(aes(label = round(Silhouette, 3)), vjust = -0.5, size = 3) +
+  labs(title = "Silhouette Scores for Optimal K (Anomalies Only)",
+       x = "Number of Clusters (K)",
+       y = "Average Silhouette Score") +
+  theme_minimal()
+
+# Step 8: Plot clusters in PCA space (first 2 PCs)
+df_plot <- data.frame(
+  PC1 = anomaly_scores[, 1],
+  PC2 = if (ncol(anomaly_scores) >= 2) anomaly_scores[, 2] else rep(0, nrow(anomaly_scores)),
+  Cluster = all_anomalies$Cluster,
+  Day = all_anomalies$Day,
+  Location = all_anomalies$Location
+)
+
+ggplot(df_plot, aes(x = PC1, y = PC2, color = Cluster, shape = Location)) +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(title = "Anomalies Clustered in PCA Space",
+       x = "PC1", y = "PC2",
+       color = "Cluster", shape = "Location") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+# Step 9: Summary of clusters
+cat("\n=== Cluster Summary ===\n")
+cluster_summary <- all_anomalies %>%
+  group_by(Cluster, Location) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  arrange(Cluster, Location)
+print(cluster_summary)
 ```
