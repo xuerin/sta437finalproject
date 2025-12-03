@@ -49,3 +49,12 @@ po/*~
 rsconnect/
 
 .apa.csl
+
+.code.md
+.code.html
+
+.final_code.md
+.final_code.html
+
+.paper.md
+.paper.html
