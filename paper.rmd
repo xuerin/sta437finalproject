@@ -239,7 +239,7 @@ acf <- ggplot(acf_df, aes(x = Lag, y = ACF)) +
 cv | acf
 ```
 
-The spatial correlation heatmap has shows that the center locations generally are correlated with each other, which suggests functional subregions where locations follow similar demand cycles. Most correlations fall in the moderate positive range, indicating coordinated but heterogeneous behavior across the network. Therefore location-specific anomaly detect is meaningful with location specific nuances, and network-wide patterns could also be coherent enough as the system has shared temporal dynamics. 
+The spatial correlation heatmap has shows that the center locations generally are correlated with each other, which suggests functional subregions where locations follow similar demand cycles. Most correlations fall in the moderate positive range, indicating coordinated but heterogeneous behavior across the network. Therefore location-specific anomaly detection is meaningful with location specific nuances, and network-wide patterns could also be coherent enough as the system has shared temporal dynamics. 
 
 ```{r spatial-corr, fig.height=4, echo=FALSE, message=FALSE, warning=FALSE}
 library(corrplot)
@@ -450,7 +450,7 @@ for (loc_name in names(location_results)) {
 }
 ```
 
-PCA retained between 2 and 9 components across all 26 locations, consistently explaining at least 90% of total variance, with cumulative explained variance ranging from 0.9006 to 0.9404 (Table X).
+PCA retained between 2 and 9 components across all 26 locations, consistently explaining at least 90% of total variance, with cumulative explained variance ranging from 0.9006 to 0.9404.
 PCA detected between 4 and 31 anomalous days per location, with most locations falling in the 15–25 anomaly range. This demonstrates that although each daily curve contains 288 five-minute observations, the dominant variation is always low-dimensional.
 
 Across locations, the first two principal components (PCs) followed consistent functional interpretations:
