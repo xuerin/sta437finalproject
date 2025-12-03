@@ -8,7 +8,7 @@ fontsize: 12pt
 
 ## Initial Setup
 
-```{r setup, message=FALSE, warning=FALSE}
+```{r setup, message=FALSE, warning=FALSE, echo=FALSE}
 library(tidyverse)
 library(knitr)
 library(ggplot2)
@@ -29,7 +29,7 @@ num_sheets <- length(sheet_names)
 ```
 
 ## Cleaning, summary stats, graphs by location
-```{r data-cleaning}
+```{r data-cleaning, message=FALSE, warning=FALSE, echo=FALSE}
 cat("Loading all location data:\n\n")
 
 # Store in list because dealing with 26 locations

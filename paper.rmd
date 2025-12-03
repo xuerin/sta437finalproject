@@ -15,21 +15,26 @@ nocite: '@*'
 link-citations: true
 ---
 ## Introduction
-Due to the unavoidable nature of traffic congestion in urban locations, studying its patterns and underlying dynamics enables daily commuters and transportation authorities to transition from reactive management to proactive intervention, leading to overall reduced congestion, lower emissions and improved commuter safety around high-density areas. However, accurately detecting and predicting traffic anomalies that cause significant delays remains a challenge due to the inherent complexity of traffic dynamics, which are continuous, stochastic, spatiotemporally autocorrelated and cross-correlated at the network level [@columbia_spatiotemporal]. 
+Due to the unavoidable nature of traffic congestion in urban locations, studying its patterns and underlying dynamics enables daily commuters and transportation authorities to transition from reactive management to proactive intervention, leading to overall reduced congestion, lower emissions and improved commuter safety around high-density areas. However, accurately detecting and predicting traffic anomalies that cause significant delays remains a challenge due to the inherent complexity of traffic dynamics, which are continuous, stochastic, spatiotemporally autocorrelated and cross-correlated [@columbia_spatiotemporal]. 
 
 As existing prediction has evolved from interval-based pointwise in univariate time-series data to a functional approach at the network-level utilizing neural networks [@ma2024network], this project offers a comparative assessment of common multivariate statistical techniques that are highly interpretable as benchmarks for further study. The goal of this paper is to identify and classify location-specific anomalies from the intraday patterns of traffic volume flow collected across 26 monitoring sites around the University of Toronto by comparing principal component analysis (PCA), factor analysis (FA), and independent component analysis (ICA) methods, which are selected for their ability to achieve dimension reduction, interpret latent regimes, and isolate mixed data components. 
 
 ## Data Description
-The dataset, synthetically modeled from @ma2024network, has a natural tensor structure consisting of 26 locations ($l$), 384 ($n$) days each, and 288 ($p$) five-minute time points per day. Then each slice $X \in \mathbb{R^{n \times p}}$, called the daily traffic matrix, corresponds to one location and forms a $384 \times 288$ matrix. 
+The dataset, synthetically modeled from @ma2024network, has a natural tensor structure consisting of 26 locations ($l$), 384 ($n$) days each, and 288 ($p$) five-minute time points per day. Then each slice $X \in \mathbb{R^{n \times p}}$, called the daily traffic matrix, corresponds to one location and forms a $384 \times 288$ matrix, with each entry as volume in vehicles. 
 
-There are no missing values and the dimensions are uniform, so there was no data cleaning to be done. Matrices were transposed so that rows corresponded to days and columns to time points. Exploratory analysis prior to the application of PCA, FA and ICA focuses on understanding the distributional properties of the daily profiles, temporal regularities and recurrent patterns and spatial correlations among locations.
-
-To visualize day-to-day variability at individual locations, spaghetti plots of daily profiles were generated. These plots reveal the typical diurnal traffic structure characterized by morning and evening peaks.
-```{r setup, message=FALSE, warning=FALSE}
+No data cleaning was required, as all locations share uniform dimensions and contain no missing observations. Exploratory visualizations were produced for two randomly selected locations to conserve space. Spaghetti plots by location and by day, accompanied by summary statistics, highlight clear daily peak structures. The first location exhibits lower median flow than the second, suggesting a less trafficked or more residential area. In contrast, the two randomly sampled days display similar median volumes, consistent with typical weekday patterns. These preliminary observations motivate the subsequent use of statistical methods to quantify temporal and spatial structure in the full dataset.
+```{r setup, message=FALSE, warning=FALSE, echo=FALSE}
 library(tidyverse)
-library(knitr)
 library(ggplot2)
 library(openxlsx)
+library(patchwork)
+library(reshape2)
+library(knitr)
+library(kableExtra)
+library(corrplot)
+library(fastICA)
+library(tidyr)
+library(cluster)
 file <- "traffic.xlsx"
 sheet_names <- getSheetNames(file)
 num_sheets <- length(sheet_names)
@@ -40,30 +45,231 @@ df <- lapply(sheet_names, function(sheet) {
 
 names(df) <- sheet_names
 set.seed(67)
+
+# Store in list because dealing with 26 locations
+data_list <- list()  # Original: time points times days
+data_transposed <- list()  # Transposed: days times time points
+sample_sheets <- sample(sheet_names, 2)
+random_days <- sample(1:384, 2)
+
+data_list <- list()
+data_transposed <- list()
+
+for (sheet in sheet_names) {
+  X <- df[[sheet]]
+  X_t <- t(X)
+  data_list[[sheet]] <- X
+  data_transposed[[sheet]] <- as.data.frame(X_t)
+}
 ```
 
-```{r spaghetti}
-sample_sheets <- sample(names(data_list), 3)
-spaghettis_locations <- list()
+```{r spaghetti_loc, fig.height=3, echo=FALSE, message=FALSE, warning=FALSE}
+
+spaghettis <- list()
+
 for (sheet in sample_sheets) {
-  
-  #Spaghetti
-  df_t <- data_transposed[[sheet]] %>%
-    mutate(Day = 1:n()) %>%
-    pivot_longer(cols = -Day, names_to = "Time", values_to = "Value") %>%
+
+  # Data: 384 days × 288 timepoints
+  df_t <- data_transposed[[sheet]]
+  df_t$Day <- 1:nrow(df_t)
+
+  # Long format
+  df_long <- df_t %>%
+    pivot_longer(cols = -Day,
+                 names_to = "Time",
+                 values_to = "Value") %>%
     mutate(Time = as.numeric(Time))
 
-  p2 <- ggplot(df_t, aes(x = Time, y = Value, group = Day)) +
-    geom_line(alpha = 0.2) +
-    labs(title = paste("Daily Traffic Flow Patterns:", sheet),
-         x = "Time (5-min intervals)", y = "Traffic Volume") +
-    theme_minimal()
+  # ---- Summary Stats ----
+  stats_text <- capture.output(summary(df_long$Value))
+  stats_text <- paste(stats_text, collapse = "\n")
 
-  spaghettis_locations[[sheet]] <- p2
+ stats_plot <- ggplot() +
+  annotate("text", x = 0.5, y = 0.5,
+           label = stats_text,
+           size = 3.5, hjust = 0.5, vjust = 0.5,
+           family = "mono") +
+  theme_void() +
+  labs(title = paste("Summary for", sheet)) + theme(plot.title = element_text(size = 7))
+
+  # ---- Spaghetti Plot ----
+  p <- ggplot(df_long, aes(x = Time, y = Value, group = Day)) +
+    geom_line(alpha = 0.15) +
+    labs(
+      title = paste("Daily Traffic Flow Patterns:", sheet),
+      x = "Time (5-min intervals)",
+      y = "Traffic Volume"
+    ) +
+    theme_minimal()+
+    theme(plot.title = element_text(size = 7))
+  # ---- Combine side-by-side ----
+  spaghettis[[sheet]] <- p | stats_plot
 }
-print(wrap_plots(spaghettis_locations, ncol = 1))
+
+wrap_plots(spaghettis, ncol = 1)
+```
+```{r spaghetti_day, fig.height=3, echo=FALSE, message=FALSE, warning=FALSE}
+
+spag_time <- list()
+
+for (d in random_days) {
+
+  df_day <- data.frame()
+  for (sheet in names(data_list)) {
+    X <- data_list[[sheet]]
+
+    temp <- data.frame(
+      Time = 1:nrow(X),
+      Value = X[, d],
+      Location = sheet
+    )
+    df_day <- rbind(df_day, temp)
+  }
+
+  stats_text <- capture.output(summary(df_day$Value))
+  stats_text <- paste(stats_text, collapse = "\n")
+
+  stats_plot <- ggplot() +
+    annotate("text", x = 0.5, y = 0.5,
+             label = stats_text,
+             size = 3.5, hjust = 0.5, vjust = 0.5,
+             family = "mono") +
+    theme_void() +
+    labs(title = paste("Summary for Day", d)) + theme(plot.title = element_text(size = 7))
+
+  p <- ggplot(df_day, aes(x = Time, y = Value, group = Location, color = Location)) +
+    geom_line(alpha = 0.15) +
+    labs(
+      title = paste("Traffic Across All Locations on Day", d),
+      x = "Time (5-min intervals)",
+      y = "Traffic Volume"
+    ) +
+    theme_minimal() +
+    theme(legend.position = "none") + theme(plot.title = element_text(size = 7))
+
+  spag_time[[paste0("Day_", d)]] <- stats_plot | p
+}
+
+wrap_plots(spag_time, ncol = 1)
+```
+The CV and ACF analyses indicate that the traffic system exhibits a strong diurnal rhythm and persistent temporal dependence, supporting the use of dimension-reduction methods. CV quantifies day-to-day variability at each 5-minute interval. Averaged across locations, the CV curve shows highest variability overnight, a sharp decline during the morning, and a pronounced minimum around midday, followed by increasing variability toward the evening peak. The narrow CV shadow around noon suggests highly consistent midday traffic, whereas the wider shadow during peak hours reflects differing commuter patterns across locations.
+
+Temporal autocorrelation was assessed at a representative site (Location 5), selected because its mean CV is closest to the median across all locations. The ACF reveals strong short-term persistence: autocorrelation decays gradually over several hours and remains positive even at four-hour lags, implying that intraday traffic evolves smoothly. The absence of negative correlations indicates a stable daily cycle.
+
+```{r cv-acf, fig.height=3, echo=FALSE, message=FALSE, warning=FALSE}
+# ----- Coefficient of Variation by Time of Day -----
+
+# Create time labels
+time_labels <- format(
+  seq(from = as.POSIXct("00:00", format="%H:%M"),
+      by = "5 min", length.out = 288),
+  "%H:%M"
+)
+
+# Store CV for each location (one column per location)
+cv_by_time <- data.frame(Time = time_labels)
+
+for (sheet in names(data_transposed)) {
+  df <- data_transposed[[sheet]]   # 384 × 288
+  
+  # CV at each timepoint across all days
+  cv <- apply(df, 2, function(x) sd(x, na.rm = TRUE) / mean(x, na.rm = TRUE))
+  
+  cv_by_time[[sheet]] <- cv
+}
+
+# Summary across all locations
+avg_cv <- data.frame(
+  Time = 1:288,
+  AvgCV = rowMeans(cv_by_time[, -1], na.rm = TRUE),
+  MinCV = apply(cv_by_time[, -1], 1, min, na.rm = TRUE),
+  MaxCV = apply(cv_by_time[, -1], 1, max, na.rm = TRUE)
+)
+
+# Plot CV curves
+cv <- ggplot(avg_cv, aes(x = Time, y = AvgCV)) +
+  geom_ribbon(aes(ymin = MinCV, ymax = MaxCV), fill = "steelblue", alpha = 0.15) +
+  geom_line(color = "steelblue", size = 1) +
+  labs(
+    title = "Traffic Variability Throughout the Day",
+    subtitle = "Coefficient of Variation (CV = SD / Mean) across all locations",
+    x = "Time of Day",
+    y = "Coefficient of Variation"
+  ) +
+  scale_x_continuous(
+    breaks = seq(1, 288, length.out = 7),
+    labels = c("00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00")
+  ) +
+  theme_minimal() + theme(plot.title = element_text(size = 7)) + theme(plot.subtitle = element_text(size = 7))
+
+cv_location_summary <- data.frame(
+  Location = names(cv_by_time)[-1],
+  MeanCV = colMeans(cv_by_time[, -1], na.rm = TRUE)
+)
+
+# location whose CV is closest to the median
+loc_acf <- cv_location_summary$Location[
+  which.min(abs(cv_location_summary$MeanCV -
+                median(cv_location_summary$MeanCV)))
+]
+
+df_loc <- data_transposed[[loc_acf]]
+
+# median profile across the year
+typical_day <- apply(df_loc, 2, median)
+
+# ACF (lags up to 4 hours)
+acf_obj <- acf(typical_day, lag.max = 48, plot = FALSE)
+
+acf_df <- data.frame(
+  Lag = acf_obj$lag * 5,
+  ACF = as.numeric(acf_obj$acf)
+)
+acf <- ggplot(acf_df, aes(x = Lag, y = ACF)) +
+  geom_segment(aes(xend = Lag, yend = 0), color = "steelblue") +
+  geom_point(color = "steelblue") +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = paste("Temporal Autocorrelation (ACF):", loc_acf),
+    x = "Lag (minutes)",
+    y = "Autocorrelation"
+  ) +
+  theme_minimal() +  theme(plot.title = element_text(size = 7))
+
+cv | acf
+```
+
+The spatial correlation heatmap has shows that the center locations generally are correlated with each other, which suggests functional subregions where locations follow similar demand cycles. Most correlations fall in the moderate positive range, indicating coordinated but heterogeneous behavior across the network. Therefore location-specific anomaly detect is meaningful with location specific nuances, and network-wide patterns could also be coherent enough as the system has shared temporal dynamics. 
+
+```{r spatial-corr, fig.height=4, echo=FALSE, message=FALSE, warning=FALSE}
+library(corrplot)
+
+# 1. Compute daily total traffic for each location
+daily_totals <- data.frame(matrix(nrow = 384, ncol = 0))
+
+for (loc in names(data_list)) {
+  X <- data_list[[loc]]  # 288 timepoints × 384 days
+  totals <- colSums(X)   # total traffic per day
+  daily_totals[[loc]] <- totals
+}
+
+# 2. Correlation matrix across 26 locations
+location_cor <- cor(daily_totals)
+
+# 3. Correlogram
+corrplot(
+  location_cor,
+  method = "color",
+  type = "upper",
+  tl.col = "black",
+  tl.cex = 0.6,
+  col = colorRampPalette(c("#ff4d00", "#B6D6A8", "#2166AC"))(200),
+  mar = c(0, 0, 2, 0),
+  title = "Spatial Correlation: Daily Total Traffic Across 26 Locations", cex.main = 0.5
+)
 
 ```
+
 ## Methodology
 The traffic dataset is high-dimensional, functional in nature (with $p=288$ time points per day), and exhibits substantial temporal dependence.
 
@@ -84,7 +290,262 @@ ICA anomalies were detected via the same $1.5 \times \mathrm{IQR}$ rule applied 
 All anomalies identified across PCA, FA, and ICA were projected onto their two-dimensional principal component subspace and partitioned using k-means clustering [@piech2013kmeans]. This method was selected for its computational efficiency and suitability for continuous Euclidean feature spaces. The number of clusters was chosen by maximizing the average silhouette coefficient: $k^\ast = \arg\max_k \left\{\frac{1}{N} \sum_{i=1}^{N} \frac{b(i) - a(i)}{\max\{a(i), b(i)\}} \right\}$, where $a(i)$ is the average within-cluster distance and $b(i)$ is the minimum average between-cluster distance [@rousseeuw1987silhouettes]. This procedure yields interpretable groups of anomalies that reflect distinct structural perturbations in daily traffic dynamics. Taken together, PCA, FA, and ICA form a benchmark set: PCA captures global variance-driven deviations, FA captures structural inconsistencies relative to latent factors, and ICA captures independent localized perturbations. Using all three offers a comprehensive view of anomalous behavior from orthogonal interpretive perspectives: variance, latent structure, and independence. This ensures that anomalies detected are robust to modeling assumptions and interpretable in terms of their functional, temporal, and structural characteristics.
 
 ## Results
+```{r results-setup, message=FALSE, warning=FALSE}
 
+
+file <- "traffic.xlsx"
+sheet_names <- getSheetNames(file)
+num_sheets <- length(sheet_names)
+
+df <- lapply(sheet_names, function(sheet) {
+  as.matrix(read.xlsx(file, sheet = sheet, colNames = TRUE))
+})
+names(df) <- sheet_names
+```
+
+## Helper Functions
+```{r helpers}
+choose_k_pca <- function(pca, threshold = 0.90) {
+  var_expl <- pca$sdev^2 / sum(pca$sdev^2)
+  cumvar <- cumsum(var_expl)
+  k <- which(cumvar >= threshold)[1]
+  return(k)
+}
+
+find_anomalies_from_scores <- function(score_mat, multiplier = 1.5) {
+  n_days <- nrow(score_mat)
+  is_outlier <- rep(FALSE, n_days)
+  
+  for (j in seq_len(ncol(score_mat))) {
+    x <- score_mat[, j]
+    stats <- boxplot.stats(x, coef = multiplier)
+    is_outlier[which(x %in% stats$out)] <- TRUE
+  }
+  
+  which(is_outlier)
+}
+```
+
+## Main Analysis Function
+```{r analysis}
+analyze_location <- function(loc_name,
+                             X,
+                             var_expl_threshold = 0.90,
+                             max_factors = 3,
+                             anomaly_coef = 1.5,
+                             do_ica = TRUE,
+                             n_ica_comp = 3) {
+  
+  message("Processing: ", loc_name)
+  
+  # ---- 1. Transpose and center data ----
+  X_t <- t(X)  # rows = days, cols = timepoints
+  X_centered <- scale(X_t, center = TRUE, scale = FALSE)
+  
+  # ---- 2. PCA ----
+  pca <- prcomp(X_centered, center = FALSE, scale. = FALSE)
+  k_pca <- choose_k_pca(pca, threshold = var_expl_threshold)
+  
+  pca_scores <- pca$x[, 1:k_pca, drop = FALSE]
+  pca_loadings <- pca$rotation[, 1:k_pca, drop = FALSE]
+  pca_anom_idx <- find_anomalies_from_scores(pca_scores, multiplier = anomaly_coef)
+  pca_anom_days <- rownames(pca_scores)[pca_anom_idx]
+  
+  # ---- 3. Factor Analysis on PCA scores ----
+  fa_model <- NULL
+  fa_scores <- NULL
+  fa_loadings <- NULL
+  fa_anom_days <- character(0)
+  
+  n_factors <- min(max_factors, k_pca, 5)
+  n_pcs_for_fa <- min(50, k_pca)
+  n_factors_fa <- min(n_factors, n_pcs_for_fa - 1)
+  
+  if (n_factors_fa >= 1 && n_pcs_for_fa >= 3) {
+    fa_model <- tryCatch(
+      factanal(pca_scores[, 1:n_pcs_for_fa, drop = FALSE], 
+               factors = n_factors_fa, 
+               scores = "regression", 
+               rotation = "varimax"),
+      error = function(e) NULL
+    )
+    
+    if (!is.null(fa_model)) {
+      fa_scores <- fa_model$scores
+      fa_loadings <- pca_loadings[, 1:n_pcs_for_fa] %*% fa_model$loadings[, , drop = FALSE]
+      fa_anom_idx <- find_anomalies_from_scores(fa_scores, multiplier = anomaly_coef)
+      fa_anom_days <- rownames(fa_scores)[fa_anom_idx]
+    }
+  }
+  
+  # ---- 4. ICA on PCA scores ----
+  ica_result <- NULL
+  ica_scores <- NULL
+  ica_loadings <- NULL
+  ica_anom_days <- character(0)
+  
+  if (do_ica && k_pca >= 2) {
+    n_ica_to_use <- min(n_ica_comp, k_pca)
+    
+    ica_result <- tryCatch(
+      fastICA(pca_scores, n.comp = n_ica_to_use, method = "C"),
+      error = function(e) NULL
+    )
+    
+    if (!is.null(ica_result)) {
+      ica_scores <- ica_result$S
+      if (is.null(rownames(ica_scores))) {
+        rownames(ica_scores) <- rownames(pca_scores)
+      }
+      
+      ica_loadings <- pca_loadings[, 1:n_ica_to_use, drop = FALSE] %*% ica_result$A
+      ica_anom_idx <- find_anomalies_from_scores(ica_scores, multiplier = anomaly_coef)
+      ica_anom_days <- rownames(ica_scores)[ica_anom_idx]
+    }
+  }
+  
+  # ---- Return results ----
+  list(
+    location = loc_name,
+    pca = pca,
+    k_pca = k_pca,
+    pca_scores = pca_scores,
+    pca_loadings = pca_loadings,
+    pca_anom_days = pca_anom_days,
+    fa_model = fa_model,
+    fa_scores = fa_scores,
+    fa_loadings = fa_loadings,
+    fa_anom_days = fa_anom_days,
+    ica = ica_result,
+    ica_scores = ica_scores,
+    ica_loadings = ica_loadings,
+    ica_anom_days = ica_anom_days
+  )
+}
+
+# ---- Run analysis for all locations ----
+location_results <- lapply(names(df), function(loc_name) {
+  analyze_location(
+    loc_name = loc_name,
+    X = df[[loc_name]],
+    var_expl_threshold = 0.90,
+    max_factors = 3,
+    anomaly_coef = 1.5,
+    do_ica = TRUE
+  )
+})
+names(location_results) <- names(df)
+```
+
+## Anomaly Summary by Location
+```{r view-anomalies}
+for (loc_name in names(location_results)) {
+  res <- location_results[[loc_name]]
+  cat("\n", rep("=", 60), "\n", sep = "")
+  cat("Location:", loc_name, "\n")
+  cat(rep("=", 60), "\n")
+  cat("PCA components:", res$k_pca, "\n")
+  cat("PCA anomalies (", length(res$pca_anom_days), "):", 
+      paste(res$pca_anom_days, collapse = ", "), "\n")
+  cat("FA anomalies (", length(res$fa_anom_days), "):", 
+      paste(res$fa_anom_days, collapse = ", "), "\n")
+  cat("ICA anomalies (", length(res$ica_anom_days), "):", 
+      paste(res$ica_anom_days, collapse = ", "), "\n")
+}
+```
+
+## Summary Tables
+```{r pca-summary}
+pca_summary <- data.frame(
+  Location = names(location_results),
+  k_pca = sapply(location_results, function(res) res$k_pca),
+  Variance_Explained = sapply(location_results, function(res) {
+    pca <- res$pca
+    var_expl <- pca$sdev^2 / sum(pca$sdev^2)
+    cumvar <- cumsum(var_expl)
+    round(cumvar[res$k_pca], 4)
+  }),
+  PCA_Anomaly_Count = sapply(location_results, function(res) length(res$pca_anom_days))
+)
+rownames(pca_summary) <- NULL
+print(pca_summary)
+```
+
+```{r fa-summary}
+fa_summary <- data.frame(
+  Location = names(location_results),
+  FA_Success = sapply(location_results, \(res) !is.null(res$fa_model)),
+  Factors_Extracted = sapply(location_results, function(res) {
+    if (is.null(res$fa_model)) return(0)
+    ncol(res$fa_model$loadings)
+  }),
+  FA_Anomaly_Count = sapply(location_results, function(res) length(res$fa_anom_days))
+)
+rownames(fa_summary) <- NULL
+print(fa_summary)
+```
+
+```{r ica-summary}
+ica_summary <- data.frame(
+  Location = names(location_results),
+  ICA_Success = sapply(location_results, \(res) !is.null(res$ica_scores)),
+  ICA_Components = sapply(location_results, function(res) {
+    if (is.null(res$ica_scores)) return(0)
+    ncol(res$ica_scores)
+  }),
+  ICA_Anomaly_Count = sapply(location_results, function(res) length(res$ica_anom_days))
+)
+rownames(ica_summary) <- NULL
+print(ica_summary)
+```
+
+## PCA Loadings Visualization
+```{r plot-pca-loadings}
+plot_pca_loadings <- function(res, loc_name, n_comp = 3) {
+  loadings <- res$pca_loadings[, 1:min(n_comp, ncol(res$pca_loadings)), drop = FALSE]
+  time_hours <- seq(0, 24, length.out = nrow(loadings))
+  
+  df <- data.frame(Time = time_hours, loadings)
+  colnames(df) <- c("Time", paste0("PC", 1:ncol(loadings)))
+  
+  df_long <- pivot_longer(df, cols = -Time, names_to = "Component", values_to = "Loading")
+  
+  ggplot(df_long, aes(x = Time, y = Loading, color = Component)) +
+    geom_line(size = 1) +
+    facet_wrap(~Component, ncol = 1, scales = "free_y") +
+    labs(title = paste("PCA Loadings -", loc_name),
+         x = "Hour of Day", y = "Loading") +
+    theme_minimal() +
+    scale_x_continuous(breaks = seq(0, 24, 4))
+}
+
+for (loc_name in names(location_results)) {
+  print(plot_pca_loadings(location_results[[loc_name]], loc_name))
+}
+```
+
+PCA retained between 2 and 9 components across all 26 locations, consistently explaining at least 90% of total variance, with cumulative explained variance ranging from 0.9006 to 0.9404 (Table X).
+PCA detected between 4 and 31 anomalous days per location, with most locations falling in the 15–25 anomaly range. This demonstrates that although each daily curve contains 288 five-minute observations, the dominant variation is always low-dimensional.
+
+Across locations, the first two principal components followed consistent functional interpretations:
+
+1. PC1 (global amplitude):
+Loadings were strictly non-negative and broadly elevated across the 24-hour period, indicating that PC1 captures overall daily traffic volume, such as comparing high-traffic days vs. quiet days.
+
+2. PC2 (shape distortion / timing shift):
+PC2 loadings exhibited a morning–evening contrast, with positive loadings during morning peaks and negative loadings in the evening (or vice versa).
+This component reflects differences in peak timing, where anomalously shifted or flattened peaks appear as extreme PC2 score values.
+
+Factor Analysis successfully converged for 17 of 26 locations, always extracting 3 factors. FA identified between 4 and 16 anomalous days at successful locations, typically around 10 anomalies. Failures occurred in locations with lower PCA dimensionality or unstable covariance structure — a known limitation of FA.
+
+ICA converged successfully at all 26 locations, producing 2–3 independent components depending on PCA dimensionality. ICA detected between 3 and 19 anomalies, typically between 8 and 15 anomalies per location.
+
+
+Overall anomaly patterns across methods 
+
+Overlap among methods
+
+Clustering of anomalous days
 
 ## Discussion 
 Traffic dynamics can be intuitively viewed by their diurnal patterns, such as the sharp volume peaks observed during morning and evening rush hours. Conversely, traffic anomalies include deviations from these established norms, such as a sudden isolated car accident, holiday traffic, or systemic events like severe weather closures. Distinguishing these routine fluctuations from true anomalous events requires multivariate methods capable of decomposing the aggregate traffic flow into its underlying normal and abnormal source signals. Different multivariate decompositions reveal 

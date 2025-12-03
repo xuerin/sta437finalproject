@@ -478,6 +478,8 @@ for (loc_name in names(location_results)) {
   print(anomaly_timeline(location_results[[loc_name]], loc_name))
 }
 
+
+
 ```
 
 
