@@ -48,13 +48,13 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
-.apa.csl
+apa.csl
 
-.code.md
-.code.html
+code.md
+code.html
 
-.final_code.md
-.final_code.html
+final_code.md
+final_code.html
 
-.paper.md
-.paper.html
+paper.md
+paper.html
