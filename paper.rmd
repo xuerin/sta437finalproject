@@ -455,7 +455,7 @@ for (loc_name in names(location_results)) {
 
 PCA retained between 2 and 9 components across all 26 locations, consistently explaining at least 90% of total variance, with cumulative explained variance ranging from 0.9006 to 0.9404.
 
-```{r plot-pca-loading, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="PCA Loadings for 2 Anomalies", fig.pos='H'}
+```{r plot-pca-loading, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="PCA Loadings for 2 Locations with Anomalies", fig.pos='H'}
 
 # Specify the two locations explicitly for paper
 plot_locs <- c("Loc7", "Loc17")
@@ -521,7 +521,7 @@ pca_summary <- data.frame(
 rownames(pca_summary) <- NULL
 print(pca_summary)
 ```
-```{r pca-boxplots-specific, fig.height=3, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Boxplot for 1 PCA Anomaly", fig.pos='H'}
+```{r pca-boxplots-specific, fig.height=3, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Boxplot for 1 PCA Location with Anomalies", fig.pos='H'}
 plot_pca_boxplot <- function(res, loc_name) {
   if (is.null(res$pca_scores)) return(NULL)
   # fidn the anomalies 
@@ -564,7 +564,7 @@ wrap_plots(pca_plots, ncol = 1)
 
 Factor Analysis successfully converged for 17 of 26 locations, always extracting 3 factors. FA identified between 5-16 anomalous days at successful locations. From the output messages, convergence failures usually occured when PCA dimensionality was too low (2-3). 
 
-```{r fa-loadings, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="FA Loadings for 2 Anomalies"}
+```{r fa-loadings, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="FA Loadings for 2 Locations with Anomalies"}
 
 # Specify locations explicitly
 fa_locs <- c("Loc6", "Loc23")
@@ -622,7 +622,7 @@ fa_summary <- data.frame(
 rownames(fa_summary) <- NULL
 print(fa_summary)
 ```
-```{r fa-boxplots-specific, fig.height=3, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Boxplot for 1 FA Anomaly", fig.pos='H'}
+```{r fa-boxplots-specific, fig.height=3, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Boxplot for 1 FA Location with Anomalies", fig.pos='H'}
 plot_fa_boxplot <- function(res, loc_name) {
   if (is.null(res$fa_scores)) return(NULL)
 
@@ -667,7 +667,7 @@ FA score distributions appear more compact, with fewer extreme outliers. FA capt
 
 ICA converged successfully at all 26 locations, producing 2–3 independent components depending on PCA dimensionality as expected after PCA whitening. ICA detected between 3 and 22 anomalies, typically between 8 and 15 anomalies per location.
 
-```{r ica-loadings-specific, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="ICA Loadings for 2 Anomalies"}
+```{r ica-loadings-specific, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="ICA Loadings for 2 Locations with Anomalies"}
 
 # Specify the two locations you want
 ica_locs <- c("Loc24", "Loc25")
@@ -735,7 +735,7 @@ ica_summary <- data.frame(
 rownames(ica_summary) <- NULL
 print(ica_summary)
 ```
-```{r ica-boxplots, fig.height=3, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Boxplot for 1 ICA Anomaly",  fig.pos='H'}
+```{r ica-boxplots, fig.height=3, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Boxplot for 1 ICA Location with Anomalies",  fig.pos='H'}
 # ica get the anomalies
 plot_ica_score_boxplot <- function(res, loc_name) {
 
