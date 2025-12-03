@@ -69,28 +69,22 @@ analyze_location <- function(loc_name,
   
   message("\nProcessing location: ", loc_name)
   
-  # ---- 1. Transpose matrix so rows = days, columns = timepoints ----
   X_t <- t(X)
   X_centered <- scale(X_t, center = TRUE, scale = FALSE)
-  
-  # ---- 2. PCA ----
+
   pca <- prcomp(X_centered, center = FALSE, scale. = FALSE)
   k_pca <- choose_k_pca(pca, threshold = var_expl_threshold)
   
   pca_scores   <- pca$x[, 1:k_pca, drop = FALSE]
   pca_loadings <- pca$rotation[, 1:k_pca, drop = FALSE]
   
-  # ---- 3. PCA-based anomaly detection ----
   pca_anom_idx  <- find_anomalies_from_scores(pca_scores, multiplier = anomaly_coef)
   pca_anom_days <- rownames(pca_scores)[pca_anom_idx]
   
-  # ---- 4. Factor Analysis (on PCA scores for numerical stability) ----
   fa_model     <- NULL
   fa_scores    <- NULL
   fa_loadings  <- NULL
   fa_anom_days <- character(0)
-  
-  # Use fewer factors for interpretability (typically 2-5)
   n_factors <- min(max_factors, k_pca, 5)
   
   if (n_factors >= 1) {
@@ -125,8 +119,6 @@ analyze_location <- function(loc_name,
     message("  FA skipped for ", loc_name, ": insufficient factors")
   }
 
-  # ---ica on PCA scores---
-  
   ica_result <- NULL
   ica_anom_days <- character(0)
   ica_scores    <- NULL
@@ -172,8 +164,7 @@ if (do_ica && k_pca >= 2) {
     }
   }
 }
-  
-  # ---- 6. Return results (Now includes all ICA components) ----
+
   list(
     location       = loc_name,
     pca            = pca,
@@ -193,7 +184,6 @@ if (do_ica && k_pca >= 2) {
   )
 }
 
-# ---- Run for all locations ----
 location_results <- lapply(names(df), function(loc_name) {
   analyze_location(
     loc_name = loc_name,
@@ -478,8 +468,6 @@ for (loc_name in names(location_results)) {
   print(anomaly_timeline(location_results[[loc_name]], loc_name))
 }
 
-
-
 ```
 
 
@@ -632,7 +620,6 @@ df_long_loadings <- df_loadings %>%
                names_to = "Component",
                values_to = "Loading")
 
-# Map TimeIndex to approximate Hour for axis readability (288 intervals = 24 hours)
 df_long_loadings$Hour <- (df_long_loadings$TimeIndex - 1) * (24 / 288)
 
 ggplot(df_long_loadings, aes(x = Hour, y = Component, fill = Loading)) +
@@ -955,7 +942,7 @@ pca_cluster_plot(pca_all_scores, cluster_labels)
 ## we are not using this
 ```{r visualtimeline}
 plot_cluster_timeline <- function(cluster_labels) {
-  cluster_labels$DayIndex <- 1:nrow(cluster_labels)  # Order by time
+  cluster_labels$DayIndex <- 1:nrow(cluster_labels)
 
   ggplot(cluster_labels, aes(x = DayIndex, y = 1, color = Cluster, shape = Cluster)) +
     geom_point(size = 3, alpha = 0.8) +
@@ -1050,20 +1037,17 @@ all_anomalies_list <- lapply(location_results, function(res) {
   }
 })
 
-# Remove NULL entries
 all_anomalies_list <- Filter(Negate(is.null), all_anomalies_list)
 
-# Now rbind should work (all have same number of columns)
+
 all_anomalies <- do.call(rbind, all_anomalies_list)
 rownames(all_anomalies) <- NULL  # Reset rownames
 
 cat("Total anomalies collected:", nrow(all_anomalies), "\n")
 print(head(all_anomalies))
 
-# Step 3: Extract just the scores for clustering
-anomaly_scores <- all_anomalies[, -(1:2)]  # Remove Day and Location
+anomaly_scores <- all_anomalies[, -(1:2)]
 
-# Step 4: Find optimal K using silhouette method
 silhouette_scores <- data.frame(K = integer(), Silhouette = double())
 
 for (k in 2:min(6, nrow(anomaly_scores) - 1)) {
@@ -1078,7 +1062,6 @@ print(silhouette_scores)
 best_k <- silhouette_scores$K[which.max(silhouette_scores$Silhouette)]
 cat("Best K:", best_k, "\n")
 
-# Step 5: Run final k-means with best K
 km_anomalies <- kmeans(scale(anomaly_scores), centers = best_k, nstart = 25)
 
 # Step 6: Add cluster assignments
@@ -1113,7 +1096,6 @@ ggplot(df_plot, aes(x = PC1, y = PC2, color = Cluster, shape = Location)) +
   theme_minimal() +
   theme(legend.position = "bottom")
 
-# Step 9: Summary of clusters
 cat("\n=== Cluster Summary ===\n")
 cluster_summary <- all_anomalies %>%
   group_by(Cluster, Location) %>%
