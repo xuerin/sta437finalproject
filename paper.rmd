@@ -290,7 +290,7 @@ ICA anomalies were detected via the same $1.5 \times \mathrm{IQR}$ rule applied 
 All anomalies identified across PCA, FA, and ICA were projected onto their two-dimensional principal component subspace and partitioned using k-means clustering [@piech2013kmeans]. This method was selected for its computational efficiency and suitability for continuous Euclidean feature spaces. The number of clusters was chosen by maximizing the average silhouette coefficient: $k^\ast = \arg\max_k \left\{\frac{1}{N} \sum_{i=1}^{N} \frac{b(i) - a(i)}{\max\{a(i), b(i)\}} \right\}$, where $a(i)$ is the average within-cluster distance and $b(i)$ is the minimum average between-cluster distance [@rousseeuw1987silhouettes]. This procedure yields interpretable groups of anomalies that reflect distinct structural perturbations in daily traffic dynamics. Taken together, PCA, FA, and ICA form a benchmark set: PCA captures global variance-driven deviations, FA captures structural inconsistencies relative to latent factors, and ICA captures independent localized perturbations. Using all three offers a comprehensive view of anomalous behavior from orthogonal interpretive perspectives: variance, latent structure, and independence. This ensures that anomalies detected are robust to modeling assumptions and interpretable in terms of their functional, temporal, and structural characteristics.
 
 ## Results
-```{r results-setup, message=FALSE, warning=FALSE}
+```{r results-setup, echo=FALSE, message=FALSE, warning=FALSE, }
 
 
 file <- "traffic.xlsx"
@@ -302,9 +302,7 @@ df <- lapply(sheet_names, function(sheet) {
 })
 names(df) <- sheet_names
 ```
-
-## Helper Functions
-```{r helpers}
+```{r helpers, echo=FALSE, message=FALSE, warning=FALSE}
 choose_k_pca <- function(pca, threshold = 0.90) {
   var_expl <- pca$sdev^2 / sum(pca$sdev^2)
   cumvar <- cumsum(var_expl)
@@ -326,8 +324,7 @@ find_anomalies_from_scores <- function(score_mat, multiplier = 1.5) {
 }
 ```
 
-## Main Analysis Function
-```{r analysis}
+```{r analysis, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 analyze_location <- function(loc_name,
                              X,
                              var_expl_threshold = 0.90,
@@ -437,8 +434,7 @@ location_results <- lapply(names(df), function(loc_name) {
 names(location_results) <- names(df)
 ```
 
-## Anomaly Summary by Location
-```{r view-anomalies}
+```{r view-anomalies, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 for (loc_name in names(location_results)) {
   res <- location_results[[loc_name]]
   cat("\n", rep("=", 60), "\n", sep = "")
@@ -454,8 +450,65 @@ for (loc_name in names(location_results)) {
 }
 ```
 
-## Summary Tables
-```{r pca-summary}
+PCA retained between 2 and 9 components across all 26 locations, consistently explaining at least 90% of total variance, with cumulative explained variance ranging from 0.9006 to 0.9404 (Table X).
+PCA detected between 4 and 31 anomalous days per location, with most locations falling in the 15–25 anomaly range. This demonstrates that although each daily curve contains 288 five-minute observations, the dominant variation is always low-dimensional.
+
+Across locations, the first two principal components (PCs) followed consistent functional interpretations:
+
+1. PC1 (global amplitude):
+Loadings were strictly non-negative and broadly elevated across the 24-hour period, indicating that PC1 captures overall daily traffic volume, such as comparing high-traffic days against quiet days.
+
+2. PC2 (shape distortion / timing shift):
+PC2 loadings exhibited a morning–evening contrast, with positive loadings during morning peaks and negative loadings in the evening (or vice versa).
+This component reflects differences in peak timing, where anomalously shifted or flattened peaks appear as extreme PC2 score values.
+
+3. Higher order PCs (3-9):
+They would continue to capture localized deviations. 
+```{r plot-pca-loading, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Specify the two locations explicitly
+plot_locs <- c("Loc7", "Loc17")
+
+plot_pca_loadings <- function(res, loc_name, n_comp = 3) {
+  loadings <- res$pca_loadings[, 1:min(n_comp, ncol(res$pca_loadings)), drop = FALSE]
+  time_hours <- seq(0, 24, length.out = nrow(loadings))
+  
+  df <- data.frame(Time = time_hours, loadings)
+  colnames(df) <- c("Time", paste0("PC", 1:ncol(loadings)))
+  
+  df_long <- tidyr::pivot_longer(df, cols = -Time,
+                                 names_to = "Component",
+                                 values_to = "Loading")
+  
+  ggplot(df_long, aes(x = Time, y = Loading, color = Component)) +
+    geom_line(size = 0.9) +
+    facet_wrap(~Component, ncol = 1, scales = "free_y") +
+    labs(title = paste("PCA Loadings:", loc_name),
+         x = "Hour of Day",
+         y = "Loading") +
+    theme_minimal(base_size = 8) +
+    scale_x_continuous(breaks = seq(0, 24, 4))
+}
+
+# Produce two PCA plots
+pca_plot1 <- plot_pca_loadings(location_results[[plot_locs[1]]], plot_locs[1])
+pca_plot2 <- plot_pca_loadings(location_results[[plot_locs[2]]], plot_locs[2])
+
+# Side-by-side display using patchwork
+pca_plot1 | pca_plot2
+
+```
+PCA detected:
+
+Minimum anomalies: 4, at Location 7
+
+Maximum anomalies: 31, at location 17
+
+Typical range: 18 anomalies per location
+
+Intuitively, these anomalies correspond to days with unusually large or small PC scores relative to the interquartile range for at least one retained component. Because PCA aligns with variance-maximizing directions, these anomalies could represent large-scale distortions such as full-day surges, holiday traffic patterns, or major disruptions.
+
+```{r pca-summary, fig.width = 3, fig.height=5, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 pca_summary <- data.frame(
   Location = names(location_results),
   k_pca = sapply(location_results, function(res) res$k_pca),
@@ -470,8 +523,105 @@ pca_summary <- data.frame(
 rownames(pca_summary) <- NULL
 print(pca_summary)
 ```
+```{r pca-boxplots-specific, fig.height=8, echo=FALSE, message=FALSE, warning=FALSE}
+plot_pca_boxplot <- function(res, loc_name) {
+  if (is.null(res$pca_scores)) return(NULL)
+  
+  scores <- res$pca_scores
+  days <- rownames(scores)
+  if (is.null(days)) return(NULL)
 
-```{r fa-summary}
+  pca_anom <- res$pca_anom_days
+
+  df_long <- data.frame(
+    Day = rep(days, ncol(scores)),
+    PC = rep(colnames(scores), each = nrow(scores)),
+    Score = as.vector(scores),
+    stringsAsFactors = FALSE
+  )
+
+  df_long$AnomalyType <- ifelse(df_long$Day %in% pca_anom, "PCA Anomaly", "Normal")
+
+  ggplot(df_long, aes(x = PC, y = Score)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(data = subset(df_long, AnomalyType == "Normal"),
+                color = "gray70", alpha = 0.3, width = 0.1, size = 0.8) +
+    geom_point(data = subset(df_long, AnomalyType == "PCA Anomaly"),
+               aes(color = "PCA Anomaly"), size = 1.2) +
+    scale_color_manual(values = c("PCA Anomaly" = "red")) +
+    labs(title = paste("PCA Boxplots -", loc_name),
+         subtitle = paste("Anomalies:", length(pca_anom))) +
+    theme_minimal(base_size = 8) +
+    theme(legend.position = "bottom")
+}
+
+pca_locs <- c("Loc7", "Loc17", "Loc5")
+
+pca_plots <- lapply(pca_locs, function(loc) {
+  plot_pca_boxplot(location_results[[loc]], loc)
+})
+
+wrap_plots(pca_plots, ncol = 1)
+```
+Factor Analysis successfully converged for 17 of 26 locations, always extracting 3 factors. FA identified between 5-16 anomalous days at successful locations. From the output messages, convergence failures usually occured when PCA dimensionality was too low (2-3). 
+
+Across locations, the first two FA loadings followed these interpretations:
+
+1. FA1 (baseline daily volume)
+
+2. FA2, FA3 (Shape distortions):
+They are not variance-maximizing directions. 
+
+```{r fa-loadings, echo=FALSE, message=FALSE, warning=FALSE}
+library(patchwork)
+
+# Specify locations explicitly
+fa_locs <- c("Loc6", "Loc23")
+
+plot_fa_loadings <- function(res, loc_name) {
+  if (is.null(res$fa_loadings)) {
+    message("FA loadings unavailable for ", loc_name)
+    return(NULL)
+  }
+  
+  loadings <- res$fa_loadings
+  n_factors <- ncol(loadings)
+
+  time_hours <- seq(0, 24, length.out = nrow(loadings))
+  df <- data.frame(Time = time_hours, loadings)
+  colnames(df) <- c("Time", paste0("Factor", 1:n_factors))
+
+  df_long <- tidyr::pivot_longer(df, cols = -Time,
+                                 names_to = "Factor",
+                                 values_to = "Loading")
+
+  ggplot(df_long, aes(x = Time, y = Loading, color = Factor)) +
+    geom_line(size = 0.9) +
+    facet_wrap(~Factor, ncol = 1, scales = "free_y") +
+    labs(title = paste("FA Loadings:", loc_name),
+         x = "Hour", y = "Loading") +
+    theme_minimal(base_size = 8)
+}
+
+# Generate two plots
+fa_plot1 <- plot_fa_loadings(location_results[[fa_locs[1]]], fa_locs[1])
+fa_plot2 <- plot_fa_loadings(location_results[[fa_locs[2]]], fa_locs[2])
+
+# Side-by-side display
+fa_plot1 | fa_plot2
+```
+
+FA detected:
+
+Minimum: 4 anomalies, at Location 6
+
+Maximum: 16 anomalies Location 23
+
+Typical: 10 anomalies per successful location
+
+Intuitively, these anomalies represent days that deviate from the latent factor structure, rather than simply from variance. While PCA anomalies capture overall surges or large-scale changes, FA anomalies identify violations of latent behavioral patterns. That could be peak shifting within latent factors, inconsistent “shape modes” of daily traffic, or breakdowns of the usual relationships between morning and afternoon traffic. Because of the reduced anomaly identification, FA is more conservative and structurally selective.
+
+```{r fa-summary, fig.width = 3, fig.height=5, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 fa_summary <- data.frame(
   Location = names(location_results),
   FA_Success = sapply(location_results, \(res) !is.null(res$fa_model)),
@@ -485,7 +635,69 @@ rownames(fa_summary) <- NULL
 print(fa_summary)
 ```
 
-```{r ica-summary}
+```{r fa-boxplots-specific, fig.height=8, echo=FALSE, message=FALSE, warning=FALSE}
+plot_fa_boxplot <- function(res, loc_name) {
+  if (is.null(res$fa_scores)) return(NULL)
+
+  scores <- res$fa_scores
+  days <- rownames(scores)
+  if (is.null(days)) return(NULL)
+
+  fa_anom <- res$fa_anom_days
+
+  df_long <- data.frame(
+    Day = rep(days, ncol(scores)),
+    Factor = rep(paste0("Factor", seq_len(ncol(scores))), each = nrow(scores)),
+    Score = as.vector(scores),
+    stringsAsFactors = FALSE
+  )
+
+  df_long$AnomalyType <- ifelse(df_long$Day %in% fa_anom, "FA Anomaly", "Normal")
+
+  ggplot(df_long, aes(x = Factor, y = Score)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(data = subset(df_long, AnomalyType == "Normal"),
+                color = "gray70", alpha = 0.3, width = 0.1, size = 0.8) +
+    geom_point(data = subset(df_long, AnomalyType == "FA Anomaly"),
+               aes(color = "FA Anomaly"), size = 1.2) +
+    scale_color_manual(values = c("FA Anomaly" = "blue")) +
+    labs(title = paste("FA Boxplots -", loc_name),
+         subtitle = paste("Anomalies:", length(fa_anom))) +
+    theme_minimal(base_size = 8) +
+    theme(legend.position = "bottom")
+}
+
+fa_locs <- c("Loc6", "Loc23", "Loc5")
+
+fa_plots <- lapply(fa_locs, function(loc) {
+  plot_fa_boxplot(location_results[[loc]], loc)
+})
+
+wrap_plots(fa_plots, ncol = 1)
+```
+ICA converged successfully at all 26 locations, producing 2–3 independent components depending on PCA dimensionality as expected after PCA whitening. ICA detected between 3 and 22 anomalies, typically between 8 and 15 anomalies per location.
+
+Across all locations, the first two sources followed consistent functional interpretations:
+
+1. ICA Source 1 (localized spikes):
+The shape is a sharp positive or negative jump over a very short interval (10–30 minutes). This could mean a sudden incident, brief surge, or lane closure, or short-lived dip (sometimes negative spike). It is statistically independent from the smooth daily curve. 
+
+2. ICA Source 2 (Independent morning distruption):
+The is a strong swing isolated around around 7–10 AM. This could be interpreted as morning congestion anomalies school-day vs. holiday pattern, morning-only incident, or weather-related delays. These don’t necessarily correlate with evening patterns as they are independent from other components.
+
+3. ICA Source 3 (Independent evening disruption):
+A bump/dip concentrated around 4–7 PM can be interpreted as evening rush anomalies, evening event traffic, or some end-of-day incident. ICA finds this separate from morning events because morning/evening anomalies often do not co-occur.
+
+ICA detected: 
+
+Minimum: 3 anomalies, at Location 24
+
+Maximum: 19 anomalies, at Location 25
+
+Typical: 10 anomalies per location
+
+Intuitively, ICA highlights micro-structure anomalies that PCA smooths out and FA diffuses across latent factors. ICA anomalies often overlapped with PCA and FA anomalies, but identified unique, fine-grained disturbances, consistent with ICA’s sensitivity to localized, high-frequency deviations. These could be: abrupt, short-lived spikes, dips at specific time intervals, independent transient disruptions (perhaps weather or accidents).
+```{r ica-summary, fig.width = 3, fig.height=5, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 ica_summary <- data.frame(
   Location = names(location_results),
   ICA_Success = sapply(location_results, \(res) !is.null(res$ica_scores)),
@@ -498,74 +710,353 @@ ica_summary <- data.frame(
 rownames(ica_summary) <- NULL
 print(ica_summary)
 ```
+```{r ica-boxplots, fig.height=8, echo=FALSE, message=FALSE, warning=FALSE}
+# ---- Clean ICA boxplot function ----
+plot_ica_score_boxplot <- function(res, loc_name) {
 
-## PCA Loadings Visualization
-```{r plot-pca-loadings}
-plot_pca_loadings <- function(res, loc_name, n_comp = 3) {
-  loadings <- res$pca_loadings[, 1:min(n_comp, ncol(res$pca_loadings)), drop = FALSE]
-  time_hours <- seq(0, 24, length.out = nrow(loadings))
+  if (is.null(res$ica_scores)) return(NULL)
   
-  df <- data.frame(Time = time_hours, loadings)
-  colnames(df) <- c("Time", paste0("PC", 1:ncol(loadings)))
+  scores <- res$ica_scores
+  days <- rownames(scores)
+  if (is.null(days)) return(NULL)
   
-  df_long <- pivot_longer(df, cols = -Time, names_to = "Component", values_to = "Loading")
+  ica_anom <- res$ica_anom_days
   
-  ggplot(df_long, aes(x = Time, y = Loading, color = Component)) +
-    geom_line(size = 1) +
-    facet_wrap(~Component, ncol = 1, scales = "free_y") +
-    labs(title = paste("PCA Loadings -", loc_name),
-         x = "Hour of Day", y = "Loading") +
-    theme_minimal() +
-    scale_x_continuous(breaks = seq(0, 24, 4))
+  df_long <- data.frame(
+    Day = rep(days, ncol(scores)),
+    Source = rep(paste0("Source", seq_len(ncol(scores))), each = nrow(scores)),
+    Score = as.vector(scores),
+    stringsAsFactors = FALSE
+  )
+  
+  df_long$AnomalyType <- ifelse(df_long$Day %in% ica_anom, "ICA Anomaly", "Normal")
+  
+  ggplot(df_long, aes(x = Source, y = Score)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter(data = subset(df_long, AnomalyType == "Normal"),
+                color = "gray70", alpha = 0.3, width = 0.15, size = 1) +
+    geom_point(data = subset(df_long, AnomalyType == "ICA Anomaly"),
+               aes(color = "ICA Anomaly"), size = 1.2) +
+    scale_color_manual(values = c("ICA Anomaly" = "purple")) +
+    labs(title = paste("ICA Source Score Boxplots -", loc_name),
+         subtitle = paste("Anomalies detected:", length(ica_anom)),
+         x = "Independent Component",
+         y = "ICA Score") +
+    theme_minimal(base_size = 9) +
+    theme(legend.position = "bottom")
 }
 
-for (loc_name in names(location_results)) {
-  print(plot_pca_loadings(location_results[[loc_name]], loc_name))
-}
+# ---- Specific ICA locations ----
+ica_locs <- c("Loc24", "Loc25", "Loc5")
+
+ica_plots <- lapply(ica_locs, function(loc) {
+  plot_ica_score_boxplot(location_results[[loc]], loc)
+})
+
+# ---- Combine with patchwork ----
+wrap_plots(ica_plots, ncol = 1)
 ```
 
-PCA retained between 2 and 9 components across all 26 locations, consistently explaining at least 90% of total variance, with cumulative explained variance ranging from 0.9006 to 0.9404 (Table X).
-PCA detected between 4 and 31 anomalous days per location, with most locations falling in the 15–25 anomaly range. This demonstrates that although each daily curve contains 288 five-minute observations, the dominant variation is always low-dimensional.
+```{r plot-anomalies-vs-normal, fig.width=12, echo=FALSE, message=FALSE, warning=FALSE}
+anomaly_timeline <- function(res, loc_name) {
+  all_days <- rownames(res$pca_scores)
+  df_timeline <- data.frame(DayName = all_days, DayIndex = 1:length(all_days))
+  
+  df_timeline <- df_timeline %>%
+    mutate(AnomalyType = case_when(
+      DayName %in% intersect(intersect(res$pca_anom_days, res$fa_anom_days), res$ica_anom_days) ~ "All Three",
+      DayName %in% setdiff(intersect(res$pca_anom_days, res$fa_anom_days), res$ica_anom_days) ~ "PCA & FA",
+      DayName %in% setdiff(intersect(res$pca_anom_days, res$ica_anom_days), res$fa_anom_days) ~ "PCA & ICA",
+      DayName %in% setdiff(intersect(res$fa_anom_days, res$ica_anom_days), res$pca_anom_days) ~ "FA & ICA",
+      DayName %in% setdiff(setdiff(res$pca_anom_days, res$fa_anom_days), res$ica_anom_days) ~ "PCA Only",
+      DayName %in% setdiff(setdiff(res$fa_anom_days, res$pca_anom_days), res$ica_anom_days) ~ "FA Only",
+      DayName %in% setdiff(setdiff(res$ica_anom_days, res$pca_anom_days), res$fa_anom_days) ~ "ICA Only",
+      TRUE ~ "Normal"
+    ))
 
-Across locations, the first two principal components followed consistent functional interpretations:
+  df_anomalies <- df_timeline %>% filter(AnomalyType != "Normal")
 
-1. PC1 (global amplitude):
-Loadings were strictly non-negative and broadly elevated across the 24-hour period, indicating that PC1 captures overall daily traffic volume, such as comparing high-traffic days vs. quiet days.
+  if (nrow(df_anomalies) == 0) {
+    message("No anomalies to plot for ", loc_name)
+    return(NULL)
+  }
 
-2. PC2 (shape distortion / timing shift):
-PC2 loadings exhibited a morning–evening contrast, with positive loadings during morning peaks and negative loadings in the evening (or vice versa).
-This component reflects differences in peak timing, where anomalously shifted or flattened peaks appear as extreme PC2 score values.
+  ggplot(df_anomalies, aes(x = DayIndex, y = 1)) +
+    
+    # Clean horizontal baseline
+    geom_hline(yintercept = 1, color = "gray85", linewidth = 0.3) +
+    
+    # nomaly points only
+    geom_point(aes(color = AnomalyType, shape = AnomalyType), size = 3) +
 
-Factor Analysis successfully converged for 17 of 26 locations, always extracting 3 factors. FA identified between 4 and 16 anomalous days at successful locations, typically around 10 anomalies. Failures occurred in locations with lower PCA dimensionality or unstable covariance structure — a known limitation of FA.
+    scale_color_manual(values = c(
+      "PCA Only" = "red",
+      "FA Only" = "blue",
+      "ICA Only" = "green",
+      "PCA & FA" = "purple",
+      "PCA & ICA" = "#FF7F50",
+      "FA & ICA" = "#00CED1",
+      "All Three" = "black"
+    )) +
+    scale_shape_manual(values = c(
+      "PCA Only" = 19,
+      "FA Only" = 17,
+      "ICA Only" = 15,
+      "PCA & FA" = 8,
+      "PCA & ICA" = 10,
+      "FA & ICA" = 13,
+      "All Three" = 4
+    )) +
+    labs(title = paste("Anomaly Temporal Sequence -", loc_name),
+         x = "Day Index (Time Sequence)",
+         y = "",
+         color = "Detection Source",
+         shape = "Detection Source") +
+    theme_minimal() +
+    theme(axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          legend.position = "bottom")
+}
 
-ICA converged successfully at all 26 locations, producing 2–3 independent components depending on PCA dimensionality. ICA detected between 3 and 19 anomalies, typically between 8 and 15 anomalies per location.
+# ---- Locations you want ----
+target_locs <- c("Loc7", "Loc17", "Loc6", "Loc23", "Loc24", "Loc25")
+
+# ---- Wrapper for robust plotting ----
+plot_anomaly_timeline <- function(loc) {
+  res <- location_results[[loc]]
+  if (is.null(res)) return(NULL)
+  anomaly_timeline(res, loc)
+}
+
+# ---- Generate the plots ----
+timeline_plots_raw <- lapply(target_locs, plot_anomaly_timeline)
+
+# Filter out NULLs if some locations have no anomalies
+timeline_plots <- Filter(function(x) inherits(x, "ggplot"), timeline_plots_raw)
+
+wrap_plots(timeline_plots, ncol = 2)
+```
+
+```{r summary-all-locations, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# Create summary table
+summary_df <- data.frame(
+  Location = names(location_results),
+  
+  # Total unique anomalies across all methods
+  Total_Anomalies = sapply(location_results, \(x) 
+    length(union(union(x$pca_anom_days, x$fa_anom_days), x$ica_anom_days))),
+  
+  # All three methods detected
+  All_Three = sapply(location_results, \(x) 
+    length(intersect(intersect(x$pca_anom_days, x$fa_anom_days), x$ica_anom_days))),
+  
+  # Two methods detected
+  PCA_FA = sapply(location_results, \(x)
+    length(setdiff(intersect(x$pca_anom_days, x$fa_anom_days), x$ica_anom_days))),
+  
+  PCA_ICA = sapply(location_results, \(x)
+    length(setdiff(intersect(x$pca_anom_days, x$ica_anom_days), x$fa_anom_days))),
+  
+  FA_ICA = sapply(location_results, \(x)
+    length(setdiff(intersect(x$fa_anom_days, x$ica_anom_days), x$pca_anom_days))),
+  
+  # Single method only
+  PCA_Only = sapply(location_results, \(x)
+    length(setdiff(setdiff(x$pca_anom_days, x$fa_anom_days), x$ica_anom_days))),
+  
+  FA_Only = sapply(location_results, \(x)
+    length(setdiff(setdiff(x$fa_anom_days, x$pca_anom_days), x$ica_anom_days))),
+  
+  ICA_Only = sapply(location_results, \(x)
+    length(setdiff(setdiff(x$ica_anom_days, x$pca_anom_days), x$fa_anom_days))),
+  
+  FA_Success = sapply(location_results, \(x) !is.null(x$fa_model)),
+  ICA_Success = sapply(location_results, \(x) !is.null(x$ica_scores))
+)
+
+df_long_summary <- summary_df %>%
+  pivot_longer(cols = -Location,
+               names_to = "AnomalyType",
+               values_to = "Count") %>%
+  filter(Count > 0)
 
 
-Overall anomaly patterns across methods 
 
-Overlap among methods
+print(summary_df)
+```
 
-Clustering of anomalous days
+```{r barchart, echo=FALSE, message=FALSE, warning=FALSE}
+df_long_summary <- summary_df %>%
+  pivot_longer(cols = c(PCA_Only, FA_Only, ICA_Only,
+                        PCA_FA, PCA_ICA, FA_ICA, All_Three),
+               names_to = "AnomalyType",
+               values_to = "Count") %>%
+  filter(Count > 0)
+
+fill_colors <- c(
+  "PCA_Only" = "red",
+  "FA_Only" = "blue",
+  "ICA_Only" = "green",
+  "PCA_FA" = "purple",
+  "PCA_ICA" = "#FF7F50",
+  "FA_ICA" = "#00CED1",
+  "All_Three" = "black"
+)
+
+ggplot(df_long_summary, aes(x = Location, y = Count, fill = AnomalyType)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = fill_colors,
+                    labels = c(
+                      "PCA_Only" = "PCA Only",
+                      "FA_Only" = "FA Only",
+                      "ICA_Only" = "ICA Only",
+                      "PCA_FA" = "PCA & FA",
+                      "PCA_ICA" = "PCA & ICA",
+                      "FA_ICA" = "FA & ICA",
+                      "All_Three" = "All 3 Methods"
+                    )) +
+  labs(title = "Breakdown of Anomaly Types by Location",
+       x = "Location",
+       y = "Number of Anomalous Days",
+       fill = "Anomaly Source") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+The PCA-space visualization of clustered anomalies reveals several meaningful and distinct groups, even though the clustering was performed across all locations and based on only the common first 2 PCs. The silhouette analysis selected K = 5, indicating that anomalies naturally separate into five coherent behavioral modes rather than forming a cloud. The olive cluster is dense and tightly packed at the center, going by PC1 and PC2 definitions, could mean that these anomalies may be caused by light fluctuations in overall traffic volume rather than structural changes in the daily curve. The remaining clusters were spatially distinct, reflecting more extreme pattern deviations such as shifted peak times, abnormal rush-hour intensities, or overall curve distortions. The presence of similar anomaly types across many locations suggests that some unusual days reflect network-level disruptions, while the smaller clusters indicate rarer, high-severity events. The clear separation between clusters demonstrates that PCA scores effectively encode the structural variability of traffic profiles, enabling interpretable anomaly grouping.
+```{r cluster-global-anomalies, echo=FALSE, message=FALSE, warning=FALSE}
+min_k <- min(sapply(location_results, function(res) res$k_pca))
+
+# Step 2: Collect all anomalies
+all_anomalies_list <- lapply(location_results, function(res) {
+  anom_days <- union(res$pca_anom_days, 
+                     union(res$fa_anom_days, res$ica_anom_days))
+  
+  if (length(anom_days) == 0) return(NULL)
+  
+  scores <- res$pca_scores[anom_days, 1:min_k, drop = FALSE]
+  
+  data.frame(
+    Day = rownames(scores),
+    Location = res$location,
+    scores,
+    stringsAsFactors = FALSE
+  )
+})
+
+# Remove NULL entries
+all_anomalies_list <- Filter(Negate(is.null), all_anomalies_list)
+
+# Bind into single dataframe
+all_anomalies <- do.call(rbind, all_anomalies_list)
+rownames(all_anomalies) <- NULL
+
+  
+  # Step 3: Prepare scores for clustering
+  anomaly_scores <- all_anomalies[, -(1:2), drop = FALSE]
+  scaled_scores <- scale(anomaly_scores)
+  
+  # Step 4: Find optimal K using silhouette
+  silhouette_scores <- data.frame(K = integer(), Silhouette = double())
+  
+  for (k in 2:min(6, nrow(anomaly_scores) - 1)) {
+    km <- kmeans(scaled_scores, centers = k, nstart = 25)
+    sil <- silhouette(km$cluster, dist(scaled_scores))
+    silhouette_scores <- rbind(silhouette_scores,
+                               data.frame(K = k, Silhouette = mean(sil[, 3])))
+  }
+  
+  best_k <- silhouette_scores$K[which.max(silhouette_scores$Silhouette)]
+  
+  # Step 5: Final clustering
+  km_anomalies <- kmeans(scaled_scores, centers = best_k, nstart = 25)
+  
+  all_anomalies$Cluster <- as.factor(km_anomalies$cluster)
+  
+  # Step 6: Silhouette plot
+  sil_plot <- ggplot(silhouette_scores, aes(x = K, y = Silhouette)) +
+    geom_line(color = "blue", linewidth = 1) +
+    geom_point(size = 3, color = "red") +
+    geom_text(aes(label = round(Silhouette, 3)), vjust = -0.5, size = 3) +
+    labs(title = "Silhouette Scores Across K",
+         x = "Number of Clusters", y = "Average Silhouette Score") +
+    theme_minimal()
+  
+  # Step 7: PCA space cluster plot
+  df_plot <- data.frame(
+    PC1 = scaled_scores[, 1],
+    PC2 = if (ncol(scaled_scores) >= 2) scaled_scores[, 2] else rep(0, nrow(scaled_scores)),
+    Cluster = all_anomalies$Cluster,
+    Location = all_anomalies$Location
+  )
+  
+  cluster_plot <- ggplot(df_plot, aes(x = PC1, y = PC2, color = Cluster)) +
+    geom_point(size = 2.8, alpha = 0.75) +
+    labs(title = "Anomalies in PCA Space",
+         x = "PC1", y = "PC2", color = "Cluster") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+  
+  # Display side-by-side
+cluster_plot
+```
 
 ## Discussion 
-Traffic dynamics can be intuitively viewed by their diurnal patterns, such as the sharp volume peaks observed during morning and evening rush hours. Conversely, traffic anomalies include deviations from these established norms, such as a sudden isolated car accident, holiday traffic, or systemic events like severe weather closures. Distinguishing these routine fluctuations from true anomalous events requires multivariate methods capable of decomposing the aggregate traffic flow into its underlying normal and abnormal source signals. Different multivariate decompositions reveal 
-The three dimension-reduction methods—PCA, FA, and ICA—were employed jointly 
-because they provide complementary and interpretable decompositions of the daily 
-traffic profiles. PCA serves as a variance-maximizing benchmark: it extracts the dominant 
-modes of variation and therefore identifies anomalies aligned with the primary directions 
-along which traffic curves typically fluctuate. In contrast, FA models the covariance 
-structure through latent common factors, yielding anomalies that deviate from the inferred 
-low-rank dependence structure even when their total variance is modest. FA therefore 
-acts as a structural benchmark that captures shifts in temporal pattern, peak timing, or 
-shape-based distortions not necessarily associated with high variance. ICA provides an 
-independent-signal benchmark by separating statistically independent micro-events 
-embedded within the curves. Because ICA isolates localized or abrupt disturbances that 
-PCA smooths and FA distributes across factors, it is particularly sensitive to short-lived 
-spikes, dips, and irregularities.
-## Appendix
+A comparative framework utilizing Principal Component Analysis (PCA), Factor Analysis (FA), and Independent Component Analysis (ICA) to provide a multi-faceted approach to traffic anomaly detection, moving beyond single-method reliance, was successfully employed. Findings confirm that while PCA serves as a robust variance-maximizing benchmark, its fundamental limitations as a standalone detector are frequently understated, and FA and ICA are inherently limited and unrobust alone. 
 
+There are several avenues for future research due to limitations. Firstly, all three decomposition methods are fundamentally linear transformations. This assumption may inadequately capture highly non-linear relationships inherent in complex traffic dynamics, such as chaotic system behavior or congestion cascade effects. Non-linear dimensionality reduction techniques, such as Kernel PCA or manifold learning methods, could potentially reveal subtle, non-linear structural patterns missed by the current approach. 
+
+The current reliance on just statistical heuristics (like residual thresholds for PCA/FA and IQR outliers for ICA sources) lacks direct calibration against ground-truth external events (confirmed accidents, more features), limiting the assessment of method sensitivity and specificity. To overcome this, the project should move towards collecting more features of traffic like noting the number of lanes in traffic, width in roadways, speed limits, pedestrian crossings. This would open the gates for a supervised machine learning validation framework and would allow for the rigorous comparison of method performance using tools like Receiver Operating Characteristic (ROC) analysis and enable the optimization of a data-driven threshold.
+
+The final limitation of the current study is the independent per-location analysis, which is not the detection of system-wide anomalies or coordinated disruptions across multiple sensors. The goal of network-level is to define normalcy, and anomalies relative to the entire system. Then, issues that are invisible or misinterpreted when analyzing individual sensors in isolation can be addressed, as network-level anomaly detection shifts the focus from local fluctuations to the health and behavior of the entire system.
 
 ## References 
 \begin{small}
 \textit{The Gemini Flash 2.5 model was used to assist with the formatting of this section.}
 \end{small}
+
+
+
+
+```{r three-tables-side-by-side, echo=FALSE, message=FALSE, warning=FALSE}
+library(kableExtra)
+
+# --- PCA table ---
+pca_table <- data.frame(
+  Location = names(location_results),
+  PCA_Anomalies = sapply(location_results, \(x) length(x$pca_anom_days))
+)
+
+pca_kbl <- kbl(pca_table, booktabs=TRUE) %>%
+  kable_styling(font_size=7) %>%
+  add_header_above(c(" " = 1, "PCA" = ncol(pca_table)-1))
+
+# --- FA table ---
+fa_table <- data.frame(
+  Location = names(location_results),
+  FA_Anomalies = sapply(location_results, \(x) length(x$fa_anom_days))
+)
+
+fa_kbl <- kbl(fa_table, booktabs=TRUE) %>%
+  kable_styling(font_size=7) %>%
+  add_header_above(c(" " = 1, "FA" = ncol(fa_table)-1))
+
+# --- ICA table ---
+ica_table <- data.frame(
+  Location = names(location_results),
+  ICA_Anomalies = sapply(location_results, \(x) length(x$ica_anom_days))
+)
+
+ica_kbl <- kbl(ica_table, booktabs=TRUE) %>%
+  kable_styling(font_size=7) %>%
+  add_header_above(c(" " = 1, "ICA" = ncol(ica_table)-1))
+
+# --- combine side-by-side ---
+kables(
+  list(pca_kbl, fa_kbl, ica_kbl),
+  caption = "Side-by-Side Comparison of PCA, FA, and ICA Anomaly Counts",
+  align = c("c", "c", "c")
+)
+```
