@@ -1045,7 +1045,8 @@ The current reliance on statistical heuristics (like residual thresholds or cova
 
 The final limitation is that inherently independent per-location analysis is not the detection of system-wide anomalies or coordinated disruptions across multiple sensors. The goal of network-level is to define normalcy, and anomalies relative to the entire system. Then, issues that are invisible or misinterpreted when analyzing individual sensors in isolation can be addressed, as network-level anomaly detection shifts the focus from local fluctuations to the health and behavior of the entire system. Advanced methods like Tensor Decomposition could model the shared temporal and spatial factors simultaneously. By incorporating the network's topological structure, future models can achieve a more precise decoupling of systemic factors from local fluctuations, providing the context, coherence, and causal insight needed for resilient and proactive traffic management across the entire urban network.
 
+
+## Acknowledgements
+I would like to thank my STA437 TA, Jongtaek Lee, for his patience, and for the hint about boxplot functionality. I used the Gemini Flash 2.5 model to assist with the following formatting of the references section.
+
 ## References 
-\begin{small}
-\textit{I would like to thank my TA, Jongtaek Lee, for the hint about boxplots. The Gemini Flash 2.5 model was used to assist with the formatting of this section.}
-\end{small}
